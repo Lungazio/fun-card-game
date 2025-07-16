@@ -1,0 +1,14 @@
+/Users/julianlung/Projects/PowkerC/bin/Debug/net9.0/PowkerC
+/Users/julianlung/Projects/PowkerC/bin/Debug/net9.0/PowkerC.deps.json
+/Users/julianlung/Projects/PowkerC/bin/Debug/net9.0/PowkerC.runtimeconfig.json
+/Users/julianlung/Projects/PowkerC/bin/Debug/net9.0/PowkerC.dll
+/Users/julianlung/Projects/PowkerC/bin/Debug/net9.0/PowkerC.pdb
+/Users/julianlung/Projects/PowkerC/obj/Debug/net9.0/PowkerC.GeneratedMSBuildEditorConfig.editorconfig
+/Users/julianlung/Projects/PowkerC/obj/Debug/net9.0/PowkerC.AssemblyInfoInputs.cache
+/Users/julianlung/Projects/PowkerC/obj/Debug/net9.0/PowkerC.AssemblyInfo.cs
+/Users/julianlung/Projects/PowkerC/obj/Debug/net9.0/PowkerC.csproj.CoreCompileInputs.cache
+/Users/julianlung/Projects/PowkerC/obj/Debug/net9.0/PowkerC.dll
+/Users/julianlung/Projects/PowkerC/obj/Debug/net9.0/refint/PowkerC.dll
+/Users/julianlung/Projects/PowkerC/obj/Debug/net9.0/PowkerC.pdb
+/Users/julianlung/Projects/PowkerC/obj/Debug/net9.0/PowkerC.genruntimeconfig.cache
+/Users/julianlung/Projects/PowkerC/obj/Debug/net9.0/ref/PowkerC.dll

@@ -42,6 +42,7 @@ namespace Poker.Game
     {
         public int ID { get; set; }
         public decimal RemainingContribution { get; set; }
+        public bool HasFolded { get; set; }  // Track fold status in working player
     }
     
     public class WinnerResult
@@ -69,12 +70,14 @@ namespace Poker.Game
             var pots = new List<PotInfo>();
             var potSequence = 1;
             
-            // Only include active (non-folded) players with contributions
-            var workingPlayers = players.Where(p => !p.HasFolded && p.TotalContributed > 0)
+            // Include ALL players with contributions (folded or not) for pot calculation
+            // Folded players' money should be in the pot, they just can't win it
+            var workingPlayers = players.Where(p => p.TotalContributed > 0)
                                        .Select(p => new WorkingPlayer 
                                        { 
                                            ID = p.PlayerID, 
-                                           RemainingContribution = p.TotalContributed 
+                                           RemainingContribution = p.TotalContributed,
+                                           HasFolded = p.HasFolded
                                        }).ToList();
             
             // Recursive layer peeling (danielpaz6 algorithm)
@@ -89,26 +92,31 @@ namespace Poker.Game
                     continue;
                 }
                 
-                // Step 2b: Extract equal layer from all players
-                var eligiblePlayerIDs = workingPlayers.Select(p => p.ID).ToList();
+                // Step 2b: Extract equal layer from all players (including folded)
+                // Pot amount includes contributions from ALL players (folded and active)
                 decimal potAmount = minContribution * workingPlayers.Count;
                 
-                // Step 2c: Create pot segment
+                // Step 2c: Eligible players are only non-folded players
+                var eligiblePlayerIDs = workingPlayers.Where(p => !p.HasFolded)
+                                                     .Select(p => p.ID)
+                                                     .ToList();
+                
+                // Step 2d: Create pot segment
                 pots.Add(new PotInfo
                 {
                     Name = pots.Count == 0 ? "Main Pot" : $"Side Pot {potSequence++}",
-                    Amount = potAmount,
-                    EligiblePlayerIDs = eligiblePlayerIDs,
+                    Amount = potAmount,  // Includes folded players' contributions
+                    EligiblePlayerIDs = eligiblePlayerIDs,  // Excludes folded players from winning
                     ContributionLevel = minContribution
                 });
                 
-                // Step 2d: Update remaining contributions
+                // Step 2e: Update remaining contributions for ALL players
                 foreach (var player in workingPlayers)
                 {
                     player.RemainingContribution -= minContribution;
                 }
                 
-                // Step 2e: Remove players with no remaining contribution
+                // Step 2f: Remove players with no remaining contribution
                 workingPlayers.RemoveAll(p => p.RemainingContribution <= 0);
             }
             

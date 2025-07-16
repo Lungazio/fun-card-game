@@ -27,17 +27,18 @@ namespace Poker.Game
         public Player CurrentPlayer => _turnManager?.CurrentPlayer;
         public bool IsGameActive => _currentPhase != GamePhase.Finished;
         public IReadOnlyList<Player> Players => _players.AsReadOnly();
+        public int DealerPosition => _dealerPosition;  // <-- ADD THIS
         
         public GameManager(List<Player> players, decimal smallBlind, decimal bigBlind)
         {
             if (players == null || players.Count < 2)
                 throw new ArgumentException("Need at least 2 players");
-                
+
             _players = new List<Player>(players);
             _smallBlindAmount = smallBlind;
             _bigBlindAmount = bigBlind;
             _dealerPosition = 0;
-            
+
             _deck = new Deck();
             _board = new Board();
             _pot = new Pot();
@@ -395,6 +396,7 @@ namespace Poker.Game
                 return;
                 
             Console.WriteLine($">>> {CurrentPlayer.Name}'S TURN <<<");
+            Console.WriteLine($"Your hand: {string.Join(", ", CurrentPlayer.HoleCards)}"); // ADD THIS LINE
             Console.WriteLine($"Balance: ${CurrentPlayer.CurrentBalance:F2}");
             
             var amountToCall = Math.Max(0, _turnManager.CurrentBet - CurrentPlayer.CurrentBet);

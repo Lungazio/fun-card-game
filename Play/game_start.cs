@@ -112,9 +112,9 @@ namespace Poker.Play
             if (parts.Length == 2 && decimal.TryParse(parts[1], out decimal raiseAmount))
             {
                 // Calculate total amount needed (current bet + raise amount - player's current bet)
-                var totalAmount = gameManager.TurnManager.CurrentBet + raiseAmount - currentPlayer.CurrentBet;
+                var totalAmount = raiseAmount - currentPlayer.CurrentBet;
                 
-                if (raiseAmount >= gameManager.TurnManager.MinimumRaise)
+                if (raiseAmount >= gameManager.TurnManager.CurrentBet + gameManager.TurnManager.MinimumRaise)
                 {
                     if (currentPlayer.CurrentBalance >= totalAmount)
                     {
@@ -128,7 +128,7 @@ namespace Poker.Play
                 }
                 else
                 {
-                    Console.WriteLine($"❌ Minimum raise is ${gameManager.TurnManager.MinimumRaise:F2}");
+                    Console.WriteLine($"❌ Minimum raise to ${gameManager.TurnManager.CurrentBet + gameManager.TurnManager.MinimumRaise:F2}");
                 }
             }
             else

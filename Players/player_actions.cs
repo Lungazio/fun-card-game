@@ -92,6 +92,13 @@ namespace Poker.Players
             CurrentBet += amount;
             TotalBetThisHand += amount;
             
+            // NEW: Check if this raise used up all remaining funds
+            if (_funds.CurrentBalance == 0)
+            {
+                IsAllIn = true;
+                return new ActionResult(ActionType.Raise, true, $"Raised ${amount:F2} (All-in)", amount);
+            }
+            
             return new ActionResult(ActionType.Raise, true, $"Raised ${amount:F2}", amount);
         }
         

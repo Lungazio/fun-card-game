@@ -68,12 +68,110 @@ namespace Poker.Core
             return dealtCards;
         }
         
+        // NEW: Indexing capabilities
         public Card PeekTopCard()
         {
             if (_cards.Count == 0)
                 throw new InvalidOperationException("Cannot peek at empty deck");
                 
             return _cards[_cards.Count - 1];
+        }
+        
+        public Card PeekCardAt(int index)
+        {
+            if (_cards.Count == 0)
+                throw new InvalidOperationException("Cannot peek at empty deck");
+                
+            if (index < 0 || index >= _cards.Count)
+                throw new ArgumentOutOfRangeException(nameof(index), $"Index must be between 0 and {_cards.Count - 1}");
+                
+            // Index 0 = top card, Index 1 = second from top, etc.
+            return _cards[_cards.Count - 1 - index];
+        }
+        
+        public List<Card> PeekTopCards(int count)
+        {
+            if (count > _cards.Count)
+                throw new InvalidOperationException($"Cannot peek {count} cards, only {_cards.Count} remaining");
+                
+            if (count <= 0)
+                throw new ArgumentException("Count must be positive");
+                
+            var peekedCards = new List<Card>();
+            for (int i = 0; i < count; i++)
+            {
+                peekedCards.Add(_cards[_cards.Count - 1 - i]);
+            }
+            return peekedCards;
+        }
+        
+        public Card DealCardAt(int index)
+        {
+            if (_cards.Count == 0)
+                throw new InvalidOperationException("Cannot deal from empty deck");
+                
+            if (index < 0 || index >= _cards.Count)
+                throw new ArgumentOutOfRangeException(nameof(index), $"Index must be between 0 and {_cards.Count - 1}");
+                
+            // Index 0 = top card, Index 1 = second from top, etc.
+            int actualIndex = _cards.Count - 1 - index;
+            Card card = _cards[actualIndex];
+            _cards.RemoveAt(actualIndex);
+            return card;
+        }
+        
+        public Card InsertAt(int index, Card card)
+        {
+            if (card == null)
+                throw new ArgumentNullException(nameof(card));
+                
+            if (_cards.Count == 0)
+                throw new InvalidOperationException("Cannot insert into empty deck");
+                
+            if (index < 0 || index >= _cards.Count)
+                throw new ArgumentOutOfRangeException(nameof(index), $"Index must be between 0 and {_cards.Count - 1}");
+                
+            // Index 0 = top card, Index 1 = second from top, etc.
+            int actualIndex = _cards.Count - 1 - index;
+            Card replacedCard = _cards[actualIndex];
+            _cards[actualIndex] = card;
+            return replacedCard;
+        }
+        
+        public List<Card> DealCardsAt(List<int> indices)
+        {
+            if (indices == null)
+                throw new ArgumentNullException(nameof(indices));
+                
+            // Validate all indices first
+            foreach (int index in indices)
+            {
+                if (index < 0 || index >= _cards.Count)
+                    throw new ArgumentOutOfRangeException(nameof(indices), $"Index {index} is out of range");
+            }
+            
+            // Sort indices in descending order to avoid index shifting issues when removing
+            var sortedIndices = indices.OrderByDescending(i => i).ToList();
+            var dealtCards = new List<Card>();
+            
+            foreach (int index in sortedIndices)
+            {
+                dealtCards.Add(DealCardAt(index));
+            }
+            
+            // Return in original order
+            dealtCards.Reverse();
+            return dealtCards;
+        }
+        
+        public bool IsValidIndex(int index)
+        {
+            return index >= 0 && index < _cards.Count;
+        }
+        
+        public int GetMaxValidIndex()
+        {
+            return Math.Max(0, _cards.Count - 1);
         }
         
         public void Reset()
@@ -85,6 +183,12 @@ namespace Poker.Core
         {
             Reset();
             Shuffle();
+        }
+        
+        // Debug method to see deck state (useful for testing)
+        public List<Card> GetDeckState()
+        {
+            return new List<Card>(_cards);
         }
     }
 }

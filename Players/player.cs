@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Poker.Core;
+using Poker.Power;
 
 namespace Poker.Players
 {
@@ -9,6 +10,7 @@ namespace Poker.Players
         private Funds _funds;
         private Hand _hand;
         private PlayerActions _actions;
+        private Slot _abilitySlot;
         
         public int ID { get; private set; }
         public string Name { get; private set; }
@@ -23,6 +25,9 @@ namespace Poker.Players
         public decimal CurrentBet => _actions.CurrentBet;
         public decimal TotalBetThisHand => _actions.TotalBetThisHand;
         
+        // Expose ability slot
+        public Slot AbilitySlot => _abilitySlot;
+        
         // Betting round tracking
         public bool HasActedThisRound { get; set; } = false;
         
@@ -36,6 +41,7 @@ namespace Poker.Players
             _funds = new Funds(startingFunds);
             _hand = new Hand();
             _actions = new PlayerActions(this, _funds);
+            _abilitySlot = new Slot();
         }
         
         public void SetTurn(bool isMyTurn)
@@ -110,12 +116,57 @@ namespace Poker.Players
             return result;
         }
         
+        // NEW: Ability action method
+        public ActionResult UseAbility()
+        {
+            var result = _actions.UseAbility();
+            // DON'T set HasActedThisRound = true
+            // Abilities are supplementary actions, not poker actions
+            // Player must still make a poker action (call, fold, etc.) to end turn
+            return result;
+        }
+        
+        // NEW: Ability management methods
+        public bool AddAbility(Ability ability)
+        {
+            return _abilitySlot.AddAbility(ability);
+        }
+        
+        public AbilityResult UseAbility(Ability ability, List<Player> availableTargets, object additionalData = null)
+        {
+            return _abilitySlot.UseAbility(ability, this, availableTargets, additionalData);
+        }
+        
+        public bool HasAbility(Ability ability)
+        {
+            return _abilitySlot.HasAbility(ability);
+        }
+        
+        public bool HasAbilityOfType(AbilityType type)
+        {
+            return _abilitySlot.HasAbilityOfType(type);
+        }
+        
+        public Ability FindAbilityByType(AbilityType type)
+        {
+            return _abilitySlot.FindAbilityByType(type);
+        }
+        
         // Game management methods
         public void ResetForNewHand()
         {
             _actions.ResetForNewHand();
             ClearHoleCards();
             HasActedThisRound = false;
+            // Note: Abilities persist across hands (only 2 per game)
+        }
+        
+        public void ResetForNewGame()
+        {
+            _actions.ResetForNewHand();
+            ClearHoleCards();
+            HasActedThisRound = false;
+            _abilitySlot.ResetForNewGame(); // Clear abilities for new game
         }
         
         public void ResetForNewBettingRound()
@@ -200,7 +251,8 @@ namespace Poker.Players
             var turnStatus = IsMyTurn ? " [TURN]" : "";
             var cardInfo = _hand.Count > 0 ? $" - Cards: {_hand}" : "";
             var actionInfo = IsFolded || IsAllIn ? $" - {_actions}" : "";
-            return $"{Name} - {_funds}{cardInfo}{actionInfo}{turnStatus}";
+            var abilityInfo = !_abilitySlot.IsEmpty ? $" - {_abilitySlot}" : "";
+            return $"{Name} - {_funds}{cardInfo}{actionInfo}{abilityInfo}{turnStatus}";
         }
     }
 }

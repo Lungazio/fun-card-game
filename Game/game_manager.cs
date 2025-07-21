@@ -4,6 +4,7 @@ using System.Linq;
 using Poker.Core;
 using Poker.Evaluation;
 using Poker.Players;
+using Poker.Power;
 
 namespace Poker.Game
 {
@@ -15,10 +16,13 @@ namespace Poker.Game
         private Pot _pot;
         private TurnManager _turnManager;
         private HandEvaluator _evaluator;
+        private AbilityDeck _abilityDeck;
         private GamePhase _currentPhase;
         private int _dealerPosition;
         private decimal _smallBlindAmount;
         private decimal _bigBlindAmount;
+        private bool _preflopAbilitiesDealt;
+        private bool _postflopAbilitiesDealt;
         
         public GamePhase CurrentPhase => _currentPhase;
         public Board Board => _board;
@@ -27,7 +31,9 @@ namespace Poker.Game
         public Player CurrentPlayer => _turnManager?.CurrentPlayer;
         public bool IsGameActive => _currentPhase != GamePhase.Finished;
         public IReadOnlyList<Player> Players => _players.AsReadOnly();
-        public int DealerPosition => _dealerPosition;  // <-- ADD THIS
+        public int DealerPosition => _dealerPosition;
+        public AbilityDeck AbilityDeck => _abilityDeck;
+        public Deck Deck => _deck;
         
         public GameManager(List<Player> players, decimal smallBlind, decimal bigBlind)
         {
@@ -43,7 +49,10 @@ namespace Poker.Game
             _board = new Board();
             _pot = new Pot();
             _evaluator = new HandEvaluator();
+            _abilityDeck = new AbilityDeck(_players.Count);
             _currentPhase = GamePhase.NotStarted;
+            _preflopAbilitiesDealt = false;
+            _postflopAbilitiesDealt = false;
         }
         
         public void StartNewHand()
@@ -57,6 +66,8 @@ namespace Poker.Game
             _board.Clear();
             _pot.Reset();
             _currentPhase = GamePhase.Preflop;
+            _preflopAbilitiesDealt = false;
+            _postflopAbilitiesDealt = false;
             
             // Reset all players for new hand BEFORE dealing cards
             foreach (var player in _players)
@@ -67,6 +78,9 @@ namespace Poker.Game
             
             // Deal hole cards
             DealHoleCards();
+            
+            // Deal first ability to each player (preflop)
+            DealPreflopAbilities();
             
             // Initialize turn manager and start preflop betting (without resetting players again)
             _turnManager = new TurnManager(_players, _dealerPosition, _bigBlindAmount);
@@ -80,6 +94,52 @@ namespace Poker.Game
             Console.WriteLine($"  {bigBlindPlayer.Name}: Big Blind ${_bigBlindAmount:F2}");
             
             DisplayCurrentTurn();
+        }
+        
+        private void DealPreflopAbilities()
+        {
+            if (_preflopAbilitiesDealt)
+                return;
+                
+            Console.WriteLine("\nDealing preflop abilities...");
+            
+            foreach (var player in _players)
+            {
+                if (_abilityDeck.RemainingAbilities > 0)
+                {
+                    var ability = _abilityDeck.DealAbility();
+                    player.AddAbility(ability);
+                    Console.WriteLine($"  {player.Name} received: {ability.Name}");
+                }
+            }
+            
+            _preflopAbilitiesDealt = true;
+            Console.WriteLine($"Abilities remaining in deck: {_abilityDeck.RemainingAbilities}");
+        }
+        
+        private void DealPostflopAbilities()
+        {
+            if (_postflopAbilitiesDealt || _currentPhase != GamePhase.Flop)
+                return;
+                
+            Console.WriteLine("\nDealing postflop abilities...");
+            
+            foreach (var player in _players)
+            {
+                if (_abilityDeck.RemainingAbilities > 0 && !player.IsFolded)
+                {
+                    var ability = _abilityDeck.DealAbility();
+                    player.AddAbility(ability);
+                    Console.WriteLine($"  {player.Name} received: {ability.Name}");
+                }
+                else if (player.IsFolded)
+                {
+                    Console.WriteLine($"  {player.Name} (folded) - no ability");
+                }
+            }
+            
+            _postflopAbilitiesDealt = true;
+            Console.WriteLine($"Abilities remaining in deck: {_abilityDeck.RemainingAbilities}");
         }
         
         public bool ProcessPlayerAction(ActionType actionType, decimal amount = 0)
@@ -109,8 +169,22 @@ namespace Poker.Game
                 case ActionType.AllIn:
                     result = currentPlayer.AllIn();
                     break;
+                case ActionType.UseAbility:
+                    result = currentPlayer.UseAbility();
+                    break;
+                case ActionType.Cancel:
+                    result = ActionResult.Cancelled("Returned to main actions");
+                    break;
                 default:
                     return false;
+            }
+            
+            // Handle cancelled actions - don't advance turn
+            if (result.IsCancelled)
+            {
+                Console.WriteLine($"↩️ {result.Message}");
+                DisplayCurrentTurn(); // Show options again
+                return true; // Stay on same player's turn
             }
             
             if (!result.Success)
@@ -127,19 +201,35 @@ namespace Poker.Game
             // Show player statuses after each action
             DisplayPlayerStatuses();
             
-            // Check if betting round is complete
-            if (_turnManager.IsBettingComplete())
+            // Only check for betting completion after poker actions
+            if (IsPokerAction(result.Action) && _turnManager.IsBettingComplete())
             {
                 EndCurrentBettingRound();
                 AdvanceToNextPhase();
             }
+            else if (!IsPokerAction(result.Action))
+            {
+                // For abilities, stay on same turn but refresh display
+                Console.WriteLine(); // Add spacing
+                DisplayCurrentTurn();
+            }
             else
             {
+                // Poker action but betting not complete - show next turn
                 Console.WriteLine(); // Add spacing before next turn
                 DisplayCurrentTurn();
             }
             
             return true;
+        }
+        
+        private bool IsPokerAction(ActionType actionType)
+        {
+            return actionType == ActionType.Call ||
+                   actionType == ActionType.Check ||
+                   actionType == ActionType.Fold ||
+                   actionType == ActionType.Raise ||
+                   actionType == ActionType.AllIn;
         }
         
         private void EndCurrentBettingRound()
@@ -184,7 +274,8 @@ namespace Poker.Game
             {
                 var status = GetPlayerStatus(player);
                 var betInfo = player.CurrentBet > 0 ? $" (Bet: ${player.CurrentBet:F2})" : "";
-                Console.WriteLine($"  {player.Name}: {status}{betInfo} - Balance: ${player.CurrentBalance:F2}");
+                var abilityInfo = !player.AbilitySlot.IsEmpty ? $" [Abilities: {player.AbilitySlot.Count}]" : "";
+                Console.WriteLine($"  {player.Name}: {status}{betInfo} - Balance: ${player.CurrentBalance:F2}{abilityInfo}");
             }
         }
         
@@ -265,6 +356,9 @@ namespace Poker.Game
             Console.WriteLine($"FLOP");
             Console.WriteLine($"{new string('=', 30)}");
             Console.WriteLine($"Board: {_board}");
+            
+            // Deal second ability to each player (postflop)
+            DealPostflopAbilities();
         }
         
         private void DealTurn()
@@ -396,7 +490,18 @@ namespace Poker.Game
                 return;
                 
             Console.WriteLine($">>> {CurrentPlayer.Name}'S TURN <<<");
-            Console.WriteLine($"Your hand: {string.Join(", ", CurrentPlayer.HoleCards)}"); // ADD THIS LINE
+            Console.WriteLine($"Your hand: {string.Join(", ", CurrentPlayer.HoleCards)}");
+            
+            // Show player's abilities
+            if (!CurrentPlayer.AbilitySlot.IsEmpty)
+            {
+                Console.WriteLine($"Your abilities: {CurrentPlayer.AbilitySlot}");
+            }
+            else
+            {
+                Console.WriteLine("Your abilities: None");
+            }
+            
             Console.WriteLine($"Balance: ${CurrentPlayer.CurrentBalance:F2}");
             
             var amountToCall = Math.Max(0, _turnManager.CurrentBet - CurrentPlayer.CurrentBet);
@@ -426,7 +531,8 @@ namespace Poker.Game
             Console.WriteLine($"\n--- FINAL BALANCES ---");
             foreach (var player in _players)
             {
-                Console.WriteLine($"  {player.Name}: ${player.CurrentBalance:F2}");
+                var abilityInfo = !player.AbilitySlot.IsEmpty ? $" (Unused abilities: {player.AbilitySlot.Count})" : "";
+                Console.WriteLine($"  {player.Name}: ${player.CurrentBalance:F2}{abilityInfo}");
             }
         }
     }

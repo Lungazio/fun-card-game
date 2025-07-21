@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Poker.Power;
 
 namespace Poker.Players
 {
@@ -113,6 +114,23 @@ namespace Poker.Players
             return ExecuteAllIn();
         }
         
+        // NEW: Ability action
+        public ActionResult UseAbility()
+        {
+            if (!_player.IsMyTurn)
+                return new ActionResult(ActionType.UseAbility, false, "Not your turn");
+                
+            if (!CanAct())
+                return new ActionResult(ActionType.UseAbility, false, "Player cannot act");
+            
+            // Check if player has any abilities
+            if (_player.AbilitySlot.IsEmpty)
+                return new ActionResult(ActionType.UseAbility, false, "No abilities available");
+            
+            // Return success - this triggers the ability selection UI
+            return new ActionResult(ActionType.UseAbility, true, $"{_player.Name} wants to use an ability");
+        }
+        
         private ActionResult ExecuteAllIn()
         {
             var amount = _funds.CurrentBalance;
@@ -188,6 +206,12 @@ namespace Poker.Players
                 validActions.Add(ActionType.AllIn);
             }
             
+            // NEW: Ability action is available if player has abilities
+            if (!_player.AbilitySlot.IsEmpty)
+            {
+                validActions.Add(ActionType.UseAbility);
+            }
+            
             return validActions;
         }
         
@@ -219,7 +243,9 @@ namespace Poker.Players
         Raise,
         AllIn,
         SmallBlind,
-        BigBlind
+        BigBlind,
+        UseAbility,
+        Cancel
     }
     
     public class ActionResult
@@ -228,17 +254,28 @@ namespace Poker.Players
         public bool Success { get; private set; }
         public string Message { get; private set; }
         public decimal Amount { get; private set; }
+        public bool IsCancelled { get; private set; }
         
-        public ActionResult(ActionType action, bool success, string message, decimal amount = 0)
+        public ActionResult(ActionType action, bool success, string message, decimal amount = 0, bool isCancelled = false)
         {
             Action = action;
             Success = success;
             Message = message ?? "";
             Amount = amount;
+            IsCancelled = isCancelled;
+        }
+        
+        // Static factory method for cancelled results
+        public static ActionResult Cancelled(string message = "Action cancelled")
+        {
+            return new ActionResult(ActionType.Cancel, true, message, 0, true);
         }
         
         public override string ToString()
         {
+            if (IsCancelled)
+                return $"Cancelled: {Message}";
+            
             if (Amount > 0)
                 return $"{Action}: {Message} (${Amount:F2})";
             else

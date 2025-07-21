@@ -94,6 +94,11 @@ namespace Poker.Power
         {
             _abilities.Clear();
         }
+        
+        public void ResetForNewGame()
+        {
+            _abilities.Clear();
+        }
 
         public List<Ability> ToList()
         {

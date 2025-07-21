@@ -103,8 +103,15 @@ namespace Poker.Game
             if (!_bettingRoundActive || player != CurrentPlayer)
                 return false;
                 
-            if (!action.Success)
+            if (!action.Success && !action.IsCancelled)
                 return false;
+            
+            // Handle cancelled actions - stay on same player's turn
+            if (action.IsCancelled)
+            {
+                // Don't move to next player, let current player choose again
+                return true;
+            }
             
             // Handle different action types
             switch (action.Action)
@@ -120,16 +127,37 @@ namespace Poker.Game
                 case ActionType.Call:
                 case ActionType.Check:
                 case ActionType.Fold:
-                    // No special handling needed
+                    // These are poker actions - no special handling needed
                     break;
+                    
+                case ActionType.UseAbility:
+                    // Ability actions don't end the turn - stay on same player
+                    return true;
+                    
+                case ActionType.Cancel:
+                    // Cancel actions don't end the turn - stay on same player
+                    return true;
                     
                 default:
                     return false;
             }
             
-            // Move to next player
-            MoveToNextPlayer();
+            // Only move to next player for poker actions (not abilities/cancel)
+            if (IsPokerAction(action.Action))
+            {
+                MoveToNextPlayer();
+            }
+            
             return true;
+        }
+        
+        private bool IsPokerAction(ActionType actionType)
+        {
+            return actionType == ActionType.Call ||
+                   actionType == ActionType.Check ||
+                   actionType == ActionType.Fold ||
+                   actionType == ActionType.Raise ||
+                   actionType == ActionType.AllIn;
         }
         
         private void HandleAllIn(Player player)

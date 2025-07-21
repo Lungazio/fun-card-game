@@ -17,7 +17,12 @@ namespace Poker.Controllers
         {
             if (!ValidateApiKey()) return Unauthorized("Invalid API key");
             
-            return Ok(new { message = "C# Poker API is working!", timestamp = DateTime.Now });
+            return Ok(new { 
+                message = "C# Poker API is working!", 
+                timestamp = DateTime.Now,
+                version = "1.0.0",
+                activeGames = _games.Count
+            });
         }
 
         [HttpPost("create")]
@@ -27,6 +32,21 @@ namespace Poker.Controllers
             
             try
             {
+                // Validate request
+                if (request.Players == null || request.Players.Count < 2 || request.Players.Count > 8)
+                    return BadRequest("Game must have 2-8 players");
+                
+                if (request.SmallBlind <= 0 || request.BigBlind <= 0)
+                    return BadRequest("Blinds must be positive");
+                
+                if (request.BigBlind <= request.SmallBlind)
+                    return BadRequest("Big blind must be greater than small blind");
+                
+                // Validate player data
+                var playerIds = request.Players.Select(p => p.Id).ToList();
+                if (playerIds.Distinct().Count() != playerIds.Count)
+                    return BadRequest("Player IDs must be unique");
+                
                 var gameId = Guid.NewGuid().ToString();
                 var players = request.Players.Select(p => new Player(p.Id, p.Name, p.StartingFunds)).ToList();
                 var gameManager = new GameManager(players, request.SmallBlind, request.BigBlind);
@@ -37,12 +57,14 @@ namespace Poker.Controllers
                     GameId = gameId, 
                     Success = true,
                     PlayerCount = players.Count,
-                    Blinds = new { Small = request.SmallBlind, Big = request.BigBlind }
+                    Players = players.Select(p => new { p.ID, p.Name, Balance = p.CurrentBalance }),
+                    Blinds = new { Small = request.SmallBlind, Big = request.BigBlind },
+                    CreatedAt = DateTime.Now
                 });
             }
             catch (Exception ex)
             {
-                return BadRequest(new { error = ex.Message });
+                return BadRequest(new { error = ex.Message, details = ex.StackTrace });
             }
         }
 
@@ -54,18 +76,33 @@ namespace Poker.Controllers
             if (!_games.TryGetValue(gameId, out var game))
                 return NotFound("Game not found");
             
+            // Fixed: Check the phase, not IsGameActive
+            if (game.CurrentPhase != GamePhase.NotStarted)
+            {
+                return BadRequest(new { 
+                    error = "Game has already been started",
+                    currentPhase = game.CurrentPhase.ToString(),
+                    message = "Can only start games that are in NotStarted phase"
+                });
+            }
+            
             try
             {
                 game.StartNewHand();
                 return Ok(new { 
                     Success = true, 
                     Message = "Hand started",
-                    GameState = GetGameState(game)
+                    GameState = GetGameState(game),
+                    StartedAt = DateTime.Now
                 });
             }
             catch (Exception ex)
             {
-                return BadRequest(new { error = ex.Message });
+                return BadRequest(new { 
+                    error = ex.Message, 
+                    details = ex.StackTrace,
+                    currentPhase = game.CurrentPhase.ToString()
+                });
             }
         }
 
@@ -77,48 +114,68 @@ namespace Poker.Controllers
             if (!_games.TryGetValue(gameId, out var game))
                 return NotFound("Game not found");
             
-            // Validate game is active
-            if (!game.IsGameActive || game.TurnManager?.IsBettingRoundActive != true)
+            // Enhanced validation
+            if (!game.IsGameActive)
             {
                 return BadRequest(new { 
-                    error = "Game is not active or betting round is not active",
+                    error = "Game is not active",
                     currentPhase = game.CurrentPhase.ToString(),
-                    isGameActive = game.IsGameActive
+                    gameStatus = "inactive"
                 });
             }
             
-            // Validate it's this player's turn
+            if (game.TurnManager?.IsBettingRoundActive != true)
+            {
+                return BadRequest(new { 
+                    error = "No active betting round",
+                    currentPhase = game.CurrentPhase.ToString(),
+                    bettingActive = false
+                });
+            }
+            
+            // Validate player and turn
+            var player = game.Players.FirstOrDefault(p => p.ID == request.PlayerId);
+            if (player == null)
+            {
+                return BadRequest(new { 
+                    error = "Player not found",
+                    playerId = request.PlayerId,
+                    availablePlayers = game.Players.Select(p => new { p.ID, p.Name })
+                });
+            }
+            
             if (game.CurrentPlayer?.ID != request.PlayerId)
             {
                 return BadRequest(new { 
                     error = "Not your turn", 
                     currentPlayer = game.CurrentPlayer?.Name,
                     currentPlayerId = game.CurrentPlayer?.ID,
-                    yourPlayerId = request.PlayerId
+                    yourPlayerId = request.PlayerId,
+                    turnOrder = game.Players.Select(p => new { p.ID, p.Name, p.IsMyTurn })
                 });
-            }
-            
-            // Find the specific player
-            var player = game.Players.FirstOrDefault(p => p.ID == request.PlayerId);
-            if (player == null)
-            {
-                return BadRequest(new { error = "Player not found" });
             }
             
             try
             {
-                ActionResult actionResult;
+                Poker.Players.ActionResult actionResult;
                 
-                // Execute the specific player's action with validation
+                // Validate and execute action
                 switch (request.ActionType)
                 {
                     case Poker.Players.ActionType.Call:
                         var callAmount = CalculateCallAmount(game, player);
+                        if (callAmount == 0)
+                        {
+                            return BadRequest(new { 
+                                error = "Cannot call when no bet to match - use Check instead",
+                                currentBet = game.TurnManager.CurrentBet,
+                                yourBet = player.CurrentBet
+                            });
+                        }
                         actionResult = player.Call(callAmount);
                         break;
                         
                     case Poker.Players.ActionType.Check:
-                        // Validate player can check (no bet to call)
                         if (game.TurnManager.CurrentBet > player.CurrentBet)
                         {
                             return BadRequest(new { 
@@ -136,28 +193,61 @@ namespace Poker.Controllers
                         break;
                         
                     case Poker.Players.ActionType.Raise:
-                        // Validate raise amount
+                        // Enhanced raise validation
+                        if (request.Amount <= 0)
+                        {
+                            return BadRequest(new { 
+                                error = "Raise amount must be positive",
+                                providedAmount = request.Amount
+                            });
+                        }
+                        
                         var totalRaiseAmount = game.TurnManager.CurrentBet + request.Amount;
-                        if (totalRaiseAmount < game.TurnManager.CurrentBet + game.TurnManager.MinimumRaise)
+                        var minimumRaiseTotal = game.TurnManager.CurrentBet + game.TurnManager.MinimumRaise;
+                        
+                        if (totalRaiseAmount < minimumRaiseTotal)
                         {
                             return BadRequest(new { 
                                 error = "Raise amount too small",
                                 minimumRaise = game.TurnManager.MinimumRaise,
                                 currentBet = game.TurnManager.CurrentBet,
-                                minimumTotalBet = game.TurnManager.CurrentBet + game.TurnManager.MinimumRaise
+                                minimumTotalBet = minimumRaiseTotal,
+                                yourRaiseAmount = request.Amount,
+                                requiredRaiseAmount = minimumRaiseTotal - game.TurnManager.CurrentBet
                             });
                         }
                         
                         var raiseAmountNeeded = totalRaiseAmount - player.CurrentBet;
+                        if (player.CurrentBalance < raiseAmountNeeded)
+                        {
+                            return BadRequest(new { 
+                                error = "Insufficient funds for raise",
+                                requiredAmount = raiseAmountNeeded,
+                                availableBalance = player.CurrentBalance,
+                                suggestAllIn = true
+                            });
+                        }
+                        
                         actionResult = player.Raise(raiseAmountNeeded);
                         break;
                         
                     case Poker.Players.ActionType.AllIn:
+                        if (player.CurrentBalance <= 0)
+                        {
+                            return BadRequest(new { 
+                                error = "No funds available for all-in",
+                                currentBalance = player.CurrentBalance
+                            });
+                        }
                         actionResult = player.AllIn();
                         break;
                         
                     default:
-                        return BadRequest(new { error = "Invalid action type" });
+                        return BadRequest(new { 
+                            error = "Invalid action type",
+                            providedAction = request.ActionType.ToString(),
+                            validActions = player.GetValidActions(game.TurnManager.CurrentBet, game.TurnManager.MinimumRaise)
+                        });
                 }
                 
                 if (!actionResult.Success)
@@ -165,27 +255,45 @@ namespace Poker.Controllers
                     return BadRequest(new { 
                         error = "Action failed",
                         message = actionResult.Message,
-                        playerBalance = player.CurrentBalance
+                        playerBalance = player.CurrentBalance,
+                        actionType = actionResult.Action.ToString()
                     });
                 }
                 
-                // Process the action through GameManager (handles turn advancement)
+                // Process the action and get the result
                 var gameProcessed = game.ProcessPlayerAction(request.ActionType, request.Amount);
                 
                 return Ok(new { 
                     Success = true,
                     ActionResult = actionResult.Message,
                     PlayerAction = new {
-                        Player = player.Name,
+                        PlayerId = player.ID,
+                        PlayerName = player.Name,
                         Action = request.ActionType.ToString(),
-                        Amount = actionResult.Amount
+                        Amount = actionResult.Amount,
+                        Timestamp = DateTime.Now
                     },
-                    GameState = GetGameState(game)
+                    GameState = GetGameState(game),
+                    // Additional info for debugging/logging
+                    GameInfo = new {
+                        Phase = game.CurrentPhase.ToString(),
+                        NextPlayer = game.CurrentPlayer?.Name,
+                        BettingComplete = game.TurnManager?.IsBettingComplete() ?? false
+                    }
                 });
             }
             catch (Exception ex)
             {
-                return BadRequest(new { error = ex.Message });
+                return BadRequest(new { 
+                    error = ex.Message, 
+                    details = ex.StackTrace,
+                    context = new {
+                        gameId,
+                        playerId = request.PlayerId,
+                        actionType = request.ActionType.ToString(),
+                        amount = request.Amount
+                    }
+                });
             }
         }
 
@@ -199,7 +307,12 @@ namespace Poker.Controllers
                 
             return Ok(new {
                 GameId = gameId,
-                GameState = GetGameState(game)
+                GameState = GetGameState(game),
+                Timestamp = DateTime.Now,
+                ServerInfo = new {
+                    Version = "1.0.0",
+                    ActiveGames = _games.Count
+                }
             });
         }
 
@@ -216,8 +329,13 @@ namespace Poker.Controllers
                 Phase = game.CurrentPhase.ToString(),
                 IsActive = game.IsGameActive,
                 PlayerCount = game.Players.Count,
+                ActivePlayers = game.Players.Count(p => !p.IsFolded),
                 CurrentPlayer = game.CurrentPlayer?.Name,
-                CurrentPlayerId = game.CurrentPlayer?.ID
+                CurrentPlayerId = game.CurrentPlayer?.ID,
+                BettingActive = game.TurnManager?.IsBettingRoundActive ?? false,
+                Pot = game.Players.Sum(p => p.TotalBetThisHand),
+                BoardCards = game.Board.Count,
+                Timestamp = DateTime.Now
             });
         }
 
@@ -229,7 +347,14 @@ namespace Poker.Controllers
             if (!_games.TryGetValue(gameId, out var game))
                 return NotFound("Game not found");
             
-            // Validate it's this player's turn
+            // Enhanced validation for abilities
+            var player = game.Players.FirstOrDefault(p => p.ID == request.PlayerId);
+            if (player == null)
+                return BadRequest("Player not found");
+            
+            if (!game.IsGameActive)
+                return BadRequest("Game is not active");
+            
             if (game.CurrentPlayer?.ID != request.PlayerId)
             {
                 return BadRequest(new { 
@@ -239,24 +364,73 @@ namespace Poker.Controllers
                 });
             }
             
+            if (player.AbilitySlot.IsEmpty)
+            {
+                return BadRequest(new {
+                    error = "No abilities available",
+                    playerId = request.PlayerId,
+                    playerName = player.Name
+                });
+            }
+            
             try
             {
-                var player = game.Players.FirstOrDefault(p => p.ID == request.PlayerId);
-                if (player == null)
-                    return BadRequest("Player not found");
-                    
-                var ability = player.AbilitySlot.Abilities.FirstOrDefault(a => a.Type.ToString().ToLower() == request.AbilityType.ToLower());
-                if (ability == null)
-                    return BadRequest($"Player doesn't have {request.AbilityType} ability");
+                var ability = player.AbilitySlot.Abilities.FirstOrDefault(a => 
+                    a.Type.ToString().ToLower() == request.AbilityType.ToLower());
                 
-                // Handle different ability types
-                object additionalData = request.AbilityType.ToLower() switch
+                if (ability == null)
+                    return BadRequest(new {
+                        error = $"Player doesn't have {request.AbilityType} ability",
+                        availableAbilities = player.AbilitySlot.Abilities.Select(a => a.Type.ToString())
+                    });
+                
+                // Handle different ability types with enhanced validation
+                object additionalData = null;
+                switch (request.AbilityType.ToLower())
                 {
-                    "peek" => new Poker.Power.PeekData(request.TargetPlayerId ?? 0, request.CardIndex ?? 0),
-                    "burn" => game.Deck,
-                    "manifest" => game.Deck,
-                    _ => null
-                };
+                    case "peek":
+                        if (!request.TargetPlayerId.HasValue || !request.CardIndex.HasValue)
+                            return BadRequest("Peek ability requires targetPlayerId and cardIndex");
+                        
+                        var targetPlayer = game.Players.FirstOrDefault(p => p.ID == request.TargetPlayerId.Value);
+                        if (targetPlayer == null)
+                            return BadRequest("Target player not found");
+                        
+                        if (targetPlayer.ID == request.PlayerId)
+                            return BadRequest("Cannot peek at your own cards");
+                        
+                        if (targetPlayer.IsFolded)
+                            return BadRequest("Cannot peek at folded player's cards");
+                        
+                        if (request.CardIndex < 0 || request.CardIndex > 1)
+                            return BadRequest("Card index must be 0 or 1");
+                        
+                        additionalData = new Poker.Power.PeekData(request.TargetPlayerId.Value, request.CardIndex.Value);
+                        break;
+                        
+                    case "burn":
+                        if (!request.RevealSuit.HasValue)
+                            return BadRequest("Burn ability requires revealSuit parameter");
+                        additionalData = game.Deck;
+                        break;
+                        
+                    case "manifest":
+                        if (!request.Rank.HasValue || string.IsNullOrEmpty(request.Suit))
+                            return BadRequest("Manifest ability requires rank and suit");
+                        
+                        if (request.Rank < 2 || request.Rank > 14)
+                            return BadRequest("Rank must be between 2 and 14");
+                        
+                        var validSuits = new[] { "Hearts", "Clubs", "Spades", "Diamonds" };
+                        if (!validSuits.Contains(request.Suit))
+                            return BadRequest($"Suit must be one of: {string.Join(", ", validSuits)}");
+                        
+                        additionalData = game.Deck;
+                        break;
+                        
+                    default:
+                        return BadRequest($"Unknown ability type: {request.AbilityType}");
+                }
                 
                 var availableTargets = game.Players.Where(p => p.ID != request.PlayerId && !p.IsFolded).ToList();
                 var result = player.UseAbility(ability, availableTargets, additionalData);
@@ -270,8 +444,12 @@ namespace Poker.Controllers
                         return Ok(new {
                             Success = true,
                             Message = $"Burn ability used - {finalResult.RevealedInformation}",
-                            AbilityUsed = true,
-                            GameState = GetGameState(game)
+                            AbilityUsed = request.AbilityType,
+                            PlayerId = request.PlayerId,
+                            PlayerName = player.Name,
+                            Result = finalResult.RevealedInformation,
+                            GameState = GetGameState(game),
+                            Timestamp = DateTime.Now
                         });
                     }
                     else if (result.Data is Poker.Power.ManifestPendingResult manifestPending)
@@ -280,8 +458,12 @@ namespace Poker.Controllers
                         return Ok(new {
                             Success = true,
                             Message = $"Manifested {finalResult.ChosenCard}",
-                            AbilityUsed = true,
-                            GameState = GetGameState(game)
+                            AbilityUsed = request.AbilityType,
+                            PlayerId = request.PlayerId,
+                            PlayerName = player.Name,
+                            Result = finalResult.ChosenCard.ToString(),
+                            GameState = GetGameState(game),
+                            Timestamp = DateTime.Now
                         });
                     }
                 }
@@ -289,13 +471,24 @@ namespace Poker.Controllers
                 return Ok(new {
                     Success = result.Success,
                     Message = result.Message,
-                    AbilityUsed = result.Success,
-                    GameState = GetGameState(game)
+                    AbilityUsed = request.AbilityType,
+                    PlayerId = request.PlayerId,
+                    PlayerName = player.Name,
+                    GameState = GetGameState(game),
+                    Timestamp = DateTime.Now
                 });
             }
             catch (Exception ex)
             {
-                return BadRequest(new { error = ex.Message });
+                return BadRequest(new { 
+                    error = ex.Message, 
+                    details = ex.StackTrace,
+                    context = new {
+                        gameId,
+                        playerId = request.PlayerId,
+                        abilityType = request.AbilityType
+                    }
+                });
             }
         }
 
@@ -306,7 +499,22 @@ namespace Poker.Controllers
             
             if (_games.TryRemove(gameId, out var game))
             {
-                return Ok(new { Success = true, Message = "Game ended and removed" });
+                return Ok(new { 
+                    Success = true, 
+                    Message = "Game ended and removed",
+                    GameId = gameId,
+                    FinalState = new {
+                        Phase = game.CurrentPhase.ToString(),
+                        Players = game.Players.Select(p => new {
+                            p.ID,
+                            p.Name,
+                            FinalBalance = p.CurrentBalance,
+                            TotalBet = p.TotalBetThisHand,
+                            Status = p.IsFolded ? "Folded" : p.IsAllIn ? "All-in" : "Active"
+                        })
+                    },
+                    EndedAt = DateTime.Now
+                });
             }
             
             return NotFound("Game not found");
@@ -320,12 +528,23 @@ namespace Poker.Controllers
             var activeGames = _games.Select(kvp => new {
                 GameId = kvp.Key,
                 PlayerCount = kvp.Value.Players.Count,
+                ActivePlayers = kvp.Value.Players.Count(p => !p.IsFolded),
                 Phase = kvp.Value.CurrentPhase.ToString(),
                 IsActive = kvp.Value.IsGameActive,
-                CurrentPlayer = kvp.Value.CurrentPlayer?.Name
+                CurrentPlayer = kvp.Value.CurrentPlayer?.Name,
+                Pot = kvp.Value.Players.Sum(p => p.TotalBetThisHand),
+                Players = kvp.Value.Players.Select(p => new { p.ID, p.Name, p.CurrentBalance })
             }).ToList();
             
-            return Ok(new { ActiveGames = activeGames, Count = activeGames.Count });
+            return Ok(new { 
+                ActiveGames = activeGames, 
+                Count = activeGames.Count,
+                Timestamp = DateTime.Now,
+                ServerStats = new {
+                    TotalGamesCreated = _games.Count,
+                    Uptime = DateTime.Now // Could track actual uptime
+                }
+            });
         }
 
         // Helper Methods
@@ -340,19 +559,21 @@ namespace Poker.Controllers
             return providedKey == API_KEY;
         }
         
-        // Helper method to get complete game state
+        // Enhanced helper method to get complete game state
         private object GetGameState(GameManager game)
         {
             var calculatedPot = game.Players.Sum(p => p.TotalBetThisHand);
             
             return new
             {
+                // Core game state
                 CurrentPhase = game.CurrentPhase.ToString(),
                 CurrentPlayer = game.CurrentPlayer?.Name,
                 CurrentPlayerId = game.CurrentPlayer?.ID,
                 IsGameActive = game.IsGameActive,
                 DealerPosition = game.DealerPosition,
                 
+                // Enhanced player information
                 Players = game.Players.Select(p => new
                 {
                     Id = p.ID,
@@ -365,39 +586,79 @@ namespace Poker.Controllers
                     HasActedThisRound = p.HasActedThisRound,
                     IsMyTurn = p.IsMyTurn,
                     HoleCards = p.HoleCards.Select(c => $"{c.GetRankName()} of {c.Suit}").ToList(),
+                    
+                    // Enhanced abilities info
                     Abilities = p.AbilitySlot.Abilities.Select(a => new { 
                         Id = a.ID,
                         Name = a.Name, 
                         Description = a.Description, 
                         Type = a.Type.ToString() 
                     }).ToList(),
+                    AbilityCount = p.AbilitySlot.Count,
+                    
+                    // Enhanced valid actions with more context
                     ValidActions = game.IsGameActive && p.IsMyTurn ? 
                         p.GetValidActions(game.TurnManager?.CurrentBet ?? 0, game.TurnManager?.MinimumRaise ?? 0)
-                        .Select(a => a.ToString()).ToList() : new List<string>()
+                        .Select(a => a.ToString()).ToList() : new List<string>(),
+                    
+                    // Action context for UI
+                    ActionContext = game.IsGameActive && p.IsMyTurn ? new {
+                        CanCall = p.GetValidActions(game.TurnManager?.CurrentBet ?? 0, game.TurnManager?.MinimumRaise ?? 0).Contains(ActionType.Call),
+                        CanCheck = p.GetValidActions(game.TurnManager?.CurrentBet ?? 0, game.TurnManager?.MinimumRaise ?? 0).Contains(ActionType.Check),
+                        CanRaise = p.GetValidActions(game.TurnManager?.CurrentBet ?? 0, game.TurnManager?.MinimumRaise ?? 0).Contains(ActionType.Raise),
+                        CanFold = p.GetValidActions(game.TurnManager?.CurrentBet ?? 0, game.TurnManager?.MinimumRaise ?? 0).Contains(ActionType.Fold),
+                        CanAllIn = p.GetValidActions(game.TurnManager?.CurrentBet ?? 0, game.TurnManager?.MinimumRaise ?? 0).Contains(ActionType.AllIn),
+                        CallAmount = Math.Max(0, (game.TurnManager?.CurrentBet ?? 0) - p.CurrentBet),
+                        MinRaiseAmount = game.TurnManager?.MinimumRaise ?? 0,
+                        MaxRaiseAmount = p.CurrentBalance
+                    } : null
                 }).ToList(),
                 
+                // Board state
                 Board = game.Board.CommunityCards.Select(c => $"{c.GetRankName()} of {c.Suit}").ToList(),
+                BoardState = new {
+                    CardsDealt = game.Board.Count,
+                    IsFlopDealt = game.Board.IsFlopDealt,
+                    IsTurnDealt = game.Board.IsTurnDealt,
+                    IsRiverDealt = game.Board.IsRiverDealt
+                },
+                
+                // Pot information
                 Pot = calculatedPot,
                 PotBreakdown = game.Players.Select(p => new {
-                    Player = p.Name,
+                    PlayerId = p.ID,
+                    PlayerName = p.Name,
                     Contributed = p.TotalBetThisHand
                 }).Where(p => p.Contributed > 0).ToList(),
                 
+                // Turn manager state
                 TurnManager = game.TurnManager != null ? new {
                     CurrentBet = game.TurnManager.CurrentBet,
                     MinimumRaise = game.TurnManager.MinimumRaise,
                     IsBettingRoundActive = game.TurnManager.IsBettingRoundActive,
-                    PlayersRemaining = game.TurnManager.PlayersRemaining
+                    PlayersRemaining = game.TurnManager.PlayersRemaining,
+                    PlayersCanAct = game.TurnManager.PlayersCanAct
                 } : null,
                 
+                // Ability deck state
                 AbilityDeck = new {
                     RemainingAbilities = game.AbilityDeck.RemainingAbilities,
-                    IsEmpty = game.AbilityDeck.IsEmpty
+                    IsEmpty = game.AbilityDeck.IsEmpty,
+                    Distribution = game.AbilityDeck.GetDistribution()
+                },
+                
+                // Game statistics for UI
+                GameStats = new {
+                    HandsPlayed = 1, // Could track this
+                    AveragePot = calculatedPot, // Could track average
+                    LargestPot = calculatedPot, // Could track maximum
+                    PlayersRemaining = game.Players.Count(p => !p.IsFolded),
+                    AllInPlayers = game.Players.Count(p => p.IsAllIn)
                 }
             };
         }
 
-        // Request classes
+        // Request classes with enhanced validation
         public class CreateGameRequest
         {
             public List<PlayerRequest> Players { get; set; } = new();
@@ -414,7 +675,7 @@ namespace Poker.Controllers
 
         public class ActionRequest
         {
-            public int PlayerId { get; set; }           // NEW: Required player ID
+            public int PlayerId { get; set; }
             public Poker.Players.ActionType ActionType { get; set; }
             public decimal Amount { get; set; }
         }

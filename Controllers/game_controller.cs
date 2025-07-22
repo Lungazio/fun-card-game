@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using Poker.Game;
 using Poker.Players;
 using Poker.Core;
+using Poker.Requests;
 
 namespace Poker.Controllers
 {
@@ -790,49 +791,5 @@ namespace Poker.Controllers
             };
         }
 
-        // Request classes with enhanced validation
-        public class CreateGameRequest
-        {
-            public List<PlayerRequest> Players { get; set; } = new();
-            public decimal SmallBlind { get; set; }
-            public decimal BigBlind { get; set; }
-        }
-
-        public class PlayerRequest
-        {
-            public int Id { get; set; }
-            public string Name { get; set; } = "";
-            public decimal StartingFunds { get; set; }
-        }
-
-        public class ActionRequest
-        {
-            public int PlayerId { get; set; }
-            public Poker.Players.ActionType ActionType { get; set; }
-            public decimal Amount { get; set; }
-        }
-
-        public class AbilityRequest
-        {
-            public int PlayerId { get; set; }
-            public string AbilityType { get; set; } = "";
-            public int? TargetPlayerId { get; set; }
-            public int? CardIndex { get; set; }
-            public bool? RevealSuit { get; set; }
-            
-            // Properties for manifest completion
-            public int? DiscardIndex { get; set; } // Which card to discard (0, 1, or 2)
-            public int? DrawnCard { get; set; } // Rank of the drawn card (for verification)
-            public string? DrawnCardSuit { get; set; } // Suit of the drawn card (for verification)
-            
-            // NEW: Properties for trashman completion
-            public int? BurntCardIndex { get; set; } // Which burnt card to retrieve (0, 1, or 2)
-            public int? HoleCardIndex { get; set; } // Which hole card to discard (0 or 1)
-            public int? RetrievedCardIndex { get; set; } // For verification in final step
-            
-            // Legacy properties (can be removed eventually)
-            public int? Rank { get; set; }
-            public string? Suit { get; set; }
-        }
     }
 }

@@ -24,6 +24,9 @@ namespace Poker.Game
         private bool _preflopAbilitiesDealt;
         private bool _postflopAbilitiesDealt;
         
+        // NEW: Burn pile tracking for Trashman ability
+        private List<Card> _burnPile;
+        
         public GamePhase CurrentPhase => _currentPhase;
         public Board Board => _board;
         public Pot Pot => _pot;
@@ -34,6 +37,9 @@ namespace Poker.Game
         public int DealerPosition => _dealerPosition;
         public AbilityDeck AbilityDeck => _abilityDeck;
         public Deck Deck => _deck;
+        
+        // NEW: Expose burn pile for abilities
+        public IReadOnlyList<Card> BurnPile => _burnPile.AsReadOnly();
         
         public GameManager(List<Player> players, decimal smallBlind, decimal bigBlind)
         {
@@ -53,6 +59,19 @@ namespace Poker.Game
             _currentPhase = GamePhase.NotStarted;
             _preflopAbilitiesDealt = false;
             _postflopAbilitiesDealt = false;
+            
+            // NEW: Initialize burn pile
+            _burnPile = new List<Card>();
+        }
+        
+        // NEW: Method to add cards to burn pile
+        public void AddToBurnPile(Card? card)
+        {
+            if (card != null)
+            {
+                _burnPile.Add(card);
+                Console.WriteLine($"Card added to burn pile: {card}");
+            }
         }
         
         public void StartNewHand()
@@ -68,6 +87,10 @@ namespace Poker.Game
             _currentPhase = GamePhase.Preflop;
             _preflopAbilitiesDealt = false;
             _postflopAbilitiesDealt = false;
+            
+            // NEW: Reset burn pile for new hand
+            _burnPile.Clear();
+            Console.WriteLine("Burn pile cleared for new hand");
             
             // Reset all players for new hand BEFORE dealing cards
             foreach (var player in _players)
@@ -351,11 +374,17 @@ namespace Poker.Game
         private void DealFlop()
         {
             _currentPhase = GamePhase.Flop;
-            _board.DealFlop(_deck);
+            
+            // Deal flop and capture the burnt card
+            Card? burntCard = _board.DealFlop(_deck);
+            if (burntCard != null)
+                AddToBurnPile(burntCard);
+            
             Console.WriteLine($"\n{new string('=', 30)}");
             Console.WriteLine($"FLOP");
             Console.WriteLine($"{new string('=', 30)}");
             Console.WriteLine($"Board: {_board}");
+            Console.WriteLine($"Burn pile now has {_burnPile.Count} card(s)");
             
             // Deal second ability to each player (postflop)
             DealPostflopAbilities();
@@ -364,21 +393,33 @@ namespace Poker.Game
         private void DealTurn()
         {
             _currentPhase = GamePhase.Turn;
-            _board.DealTurn(_deck);
+            
+            // Deal turn and capture the burnt card
+            Card? burntCard = _board.DealTurn(_deck);
+            if (burntCard != null)
+                AddToBurnPile(burntCard);
+            
             Console.WriteLine($"\n{new string('=', 30)}");
             Console.WriteLine($"TURN");
             Console.WriteLine($"{new string('=', 30)}");
             Console.WriteLine($"Board: {_board}");
+            Console.WriteLine($"Burn pile now has {_burnPile.Count} card(s)");
         }
         
         private void DealRiver()
         {
             _currentPhase = GamePhase.River;
-            _board.DealRiver(_deck);
+            
+            // Deal river and capture the burnt card
+            Card? burntCard = _board.DealRiver(_deck);
+            if (burntCard != null)
+                AddToBurnPile(burntCard);
+            
             Console.WriteLine($"\n{new string('=', 30)}");
             Console.WriteLine($"RIVER");
             Console.WriteLine($"{new string('=', 30)}");
             Console.WriteLine($"Board: {_board}");
+            Console.WriteLine($"Burn pile now has {_burnPile.Count} card(s)");
         }
         
         private bool ShouldEndHand()
@@ -401,6 +442,7 @@ namespace Poker.Game
             Console.WriteLine($"HAND COMPLETE");
             Console.WriteLine($"{new string('=', 50)}");
             Console.WriteLine($"Final Board: {_board}");
+            Console.WriteLine($"Final burn pile: {_burnPile.Count} card(s) - {string.Join(", ", _burnPile)}");
             
             var activePlayers = _players.Where(p => !p.IsFolded).ToList();
             
@@ -516,6 +558,10 @@ namespace Poker.Game
             
             if (_board.Count > 0)
                 Console.WriteLine($"Board: {_board}");
+                
+            // NEW: Show burn pile info if it exists
+            if (_burnPile.Count > 0)
+                Console.WriteLine($"Burn pile: {_burnPile.Count} card(s) available for Trashman");
                 
             var validActions = CurrentPlayer.GetValidActions(_turnManager.CurrentBet, _turnManager.MinimumRaise);
             Console.WriteLine($"Valid actions: [{string.Join(", ", validActions)}]");

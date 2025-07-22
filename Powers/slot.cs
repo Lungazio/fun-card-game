@@ -76,13 +76,29 @@ namespace Poker.Power
             // Execute the ability
             var result = ability.Use(user, availableTargets, additionalData);
 
-            // If successful, remove the ability from the slot (consumed)
+            // FIXED: Only consume the ability if it's completely successful (not a pending result)
             if (result.Success)
             {
-                RemoveAbility(ability);
+                // Check if this is a pending result that requires a second action
+                bool isPendingResult = result.Data is ManifestPendingResult || 
+                                     result.Data is BurnPendingResult ||
+                                     result.Data is TrashmanPendingResult;  // Added TrashmanPendingResult!
+                
+                // Only remove the ability if it's not a pending result
+                if (!isPendingResult)
+                {
+                    RemoveAbility(ability);
+                }
+                // For pending results, the ability will be consumed when completed
             }
 
             return result;
+        }
+
+        // NEW: Method to consume an ability after completion
+        public void ConsumeAbility(Ability ability)
+        {
+            RemoveAbility(ability);
         }
 
         public bool Contains(Ability ability)

@@ -38,39 +38,44 @@ namespace Poker.Core
             }
         }
         
-        public void DealFlop(Deck deck)
+        public Card? DealFlop(Deck deck)
         {
             if (_communityCards.Count > 0)
                 throw new InvalidOperationException("Flop already dealt");
                 
-            BurnCard(deck);
+            var burntCard = BurnCard(deck);
             AddCards(deck.DealCards(3));
+            return burntCard;
         }
         
-        public void DealTurn(Deck deck)
+        public Card? DealTurn(Deck deck)
         {
             if (_communityCards.Count != 3)
                 throw new InvalidOperationException("Turn can only be dealt after flop");
                 
-            BurnCard(deck);
+            var burntCard = BurnCard(deck);
             AddCard(deck.DealCard());
+            return burntCard;
         }
         
-        public void DealRiver(Deck deck)
+        public Card? DealRiver(Deck deck)
         {
             if (_communityCards.Count != 4)
                 throw new InvalidOperationException("River can only be dealt after turn");
                 
-            BurnCard(deck);
+            var burntCard = BurnCard(deck);
             AddCard(deck.DealCard());
+            return burntCard;
         }
         
-        private void BurnCard(Deck deck)
+        private Card? BurnCard(Deck deck)
         {
             if (deck.RemainingCards > 0)
             {
-                deck.DealCard(); // Burn (discard) one card
+                var burntCard = deck.DealCard(); // Capture the burnt card
+                return burntCard; // Return it so GameManager can track it
             }
+            return null;
         }
         
         public Card GetCard(int index)

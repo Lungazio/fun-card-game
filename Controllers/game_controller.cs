@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using System.Collections.Concurrent;
 using Poker.Game;
 using Poker.Players;
+using Poker.Core;
 
 namespace Poker.Controllers
 {
@@ -411,21 +412,46 @@ namespace Poker.Controllers
                     case "burn":
                         if (!request.RevealSuit.HasValue)
                             return BadRequest("Burn ability requires revealSuit parameter");
-                        additionalData = game.Deck;
+                        // Updated: Pass BurnData with both deck and game manager
+                        additionalData = new Poker.Power.BurnData(game.Deck, game);
                         break;
                         
                     case "manifest":
-                        if (!request.Rank.HasValue || string.IsNullOrEmpty(request.Suit))
-                            return BadRequest("Manifest ability requires rank and suit");
+                        // Check if this is the initial manifest or completion
+                        if (request.DiscardIndex.HasValue)
+                        {
+                            // This is completing a pending manifest
+                            return CompleteManifest(gameId, request, game, player);
+                        }
+                        else
+                        {
+                            // This is starting a new manifest
+                            additionalData = game.Deck;
+                        }
+                        break;
                         
-                        if (request.Rank < 2 || request.Rank > 14)
-                            return BadRequest("Rank must be between 2 and 14");
+                    case "trashman":
+                        // Check if this is initial trashman, step 2, or final completion
+                        if (request.BurntCardIndex.HasValue && request.HoleCardIndex.HasValue)
+                        {
+                            // This is final completion (step 3) - both indices provided
+                            return CompleteTrashman(gameId, request, game, player);
+                        }
+                        else if (request.BurntCardIndex.HasValue)
+                        {
+                            // This is step 2 (choosing hole card to discard) - only burnt card index provided
+                            return TrashmanStepTwo(gameId, request, game, player);
+                        }
+                        else
+                        {
+                            // This is initial trashman (step 1) - no indices provided
+                            additionalData = game.BurnPile.ToList();
+                        }
+                        break;
                         
-                        var validSuits = new[] { "Hearts", "Clubs", "Spades", "Diamonds" };
-                        if (!validSuits.Contains(request.Suit))
-                            return BadRequest($"Suit must be one of: {string.Join(", ", validSuits)}");
-                        
-                        additionalData = game.Deck;
+                    case "deadman":
+                        // Deadman is a simple one-step ability - just needs all players
+                        additionalData = game.Players.ToList();
                         break;
                         
                     default:
@@ -437,7 +463,7 @@ namespace Poker.Controllers
                 
                 if (result.Success)
                 {
-                    // Handle pending results for Burn and Manifest
+                    // Handle pending results for Burn, Manifest, and Trashman
                     if (result.Data is Poker.Power.BurnPendingResult burnPending)
                     {
                         var finalResult = burnPending.CompleteReveal(request.RevealSuit ?? false);
@@ -454,14 +480,68 @@ namespace Poker.Controllers
                     }
                     else if (result.Data is Poker.Power.ManifestPendingResult manifestPending)
                     {
-                        var finalResult = manifestPending.CompleteManifest(request.Rank ?? 14, request.Suit ?? "Hearts");
+                        // Return the choice for the player
                         return Ok(new {
                             Success = true,
-                            Message = $"Manifested {finalResult.ChosenCard}",
+                            Message = "Choose which card to discard",
                             AbilityUsed = request.AbilityType,
                             PlayerId = request.PlayerId,
                             PlayerName = player.Name,
-                            Result = finalResult.ChosenCard.ToString(),
+                            ChoiceRequired = true,
+                            AvailableCards = manifestPending.AllCards.Select((card, index) => new {
+                                Index = index,
+                                Card = card.ToString(),
+                                Rank = card.GetRankName(),
+                                Suit = card.Suit,
+                                IsDrawnCard = card.Equals(manifestPending.DrawnCard),
+                                CardType = card.Equals(manifestPending.DrawnCard) ? "Drawn" : "Hole Card"
+                            }),
+                            DrawnCard = new {
+                                Rank = manifestPending.DrawnCard.Rank,
+                                Suit = manifestPending.DrawnCard.Suit,
+                                Card = manifestPending.DrawnCard.ToString()
+                            },
+                            Instructions = "Select one card to discard. The remaining 2 will become your new hole cards.",
+                            Timestamp = DateTime.Now
+                        });
+                    }
+                    else if (result.Data is Poker.Power.TrashmanPendingResult trashmanPending)
+                    {
+                        // Return the first choice for the player (which burnt card to retrieve)
+                        return Ok(new {
+                            Success = true,
+                            Message = "Choose which burnt card to retrieve",
+                            AbilityUsed = request.AbilityType,
+                            PlayerId = request.PlayerId,
+                            PlayerName = player.Name,
+                            ChoiceRequired = true,
+                            Step = 1,
+                            AvailableBurntCards = trashmanPending.AvailableBurntCards.Select((card, index) => new {
+                                Index = index,
+                                Card = card.ToString(),
+                                Rank = card.GetRankName(),
+                                Suit = card.Suit
+                            }),
+                            CurrentHoleCards = trashmanPending.OriginalHoleCards.Select(card => card.ToString()),
+                            Instructions = "Select which burnt card to retrieve. You will then choose which hole card to discard.",
+                            Timestamp = DateTime.Now
+                        });
+                    }
+                    else if (result.Data is Poker.Power.DeadmanResult deadmanResult)
+                    {
+                        // Return the revealed folded players' cards
+                        return Ok(new {
+                            Success = true,
+                            Message = $"Deadman ability used - revealed {deadmanResult.FoldedPlayers.Count} folded player(s)' cards",
+                            AbilityUsed = request.AbilityType,
+                            PlayerId = request.PlayerId,
+                            PlayerName = player.Name,
+                            FoldedPlayers = deadmanResult.FoldedPlayers.Select(fp => new {
+                                PlayerId = fp.PlayerId,
+                                PlayerName = fp.PlayerName,
+                                HoleCards = fp.HoleCards
+                            }),
+                            Summary = deadmanResult.ToString(),
                             GameState = GetGameState(game),
                             Timestamp = DateTime.Now
                         });
@@ -490,6 +570,151 @@ namespace Poker.Controllers
                     }
                 });
             }
+        }
+
+        // Helper method to handle Trashman Step 2 (choosing hole card to discard)
+        private Microsoft.AspNetCore.Mvc.ActionResult TrashmanStepTwo(string gameId, AbilityRequest request, GameManager game, Player player)
+        {
+            if (!request.BurntCardIndex.HasValue)
+                return BadRequest("BurntCardIndex is required for Trashman step 2");
+
+            // Find the trashman ability (it should still be there since we didn't consume it yet)
+            var trashmanAbility = player.AbilitySlot.FindAbilityByType(Poker.Power.AbilityType.Trashman);
+            if (trashmanAbility == null)
+                return BadRequest("Player no longer has trashman ability");
+
+            // Get burn pile and validate choice
+            var burnPile = game.BurnPile.ToList();
+            var availableBurntCards = burnPile.TakeLast(Math.Min(3, burnPile.Count)).ToList();
+            
+            if (request.BurntCardIndex < 0 || request.BurntCardIndex >= availableBurntCards.Count)
+                return BadRequest($"BurntCardIndex must be between 0 and {availableBurntCards.Count - 1}");
+
+            var chosenBurntCard = availableBurntCards[request.BurntCardIndex.Value];
+
+            // Return step 2 choice (which hole card to discard)
+            return Ok(new {
+                Success = true,
+                Message = "Choose which hole card to discard",
+                AbilityUsed = request.AbilityType,
+                PlayerId = request.PlayerId,
+                PlayerName = player.Name,
+                ChoiceRequired = true,
+                Step = 2,
+                ChosenBurntCard = new {
+                    Index = request.BurntCardIndex.Value,
+                    Card = chosenBurntCard.ToString(),
+                    Rank = chosenBurntCard.GetRankName(),
+                    Suit = chosenBurntCard.Suit
+                },
+                AvailableHoleCards = player.HoleCards.Select((card, index) => new {
+                    Index = index,
+                    Card = card.ToString(),
+                    Rank = card.GetRankName(),
+                    Suit = card.Suit
+                }),
+                Instructions = $"You chose to retrieve {chosenBurntCard}. Now select which hole card to discard.",
+                Timestamp = DateTime.Now
+            });
+        }
+
+        // Helper method to complete Trashman (final step)
+        private Microsoft.AspNetCore.Mvc.ActionResult CompleteTrashman(string gameId, AbilityRequest request, GameManager game, Player player)
+        {
+            if (!request.BurntCardIndex.HasValue || !request.HoleCardIndex.HasValue)
+                return BadRequest("BurntCardIndex and HoleCardIndex are required to complete trashman");
+
+            // Find the trashman ability
+            var trashmanAbility = player.AbilitySlot.FindAbilityByType(Poker.Power.AbilityType.Trashman);
+            if (trashmanAbility == null)
+                return BadRequest("Player no longer has trashman ability");
+
+            // Get burn pile and validate burnt card choice
+            var burnPile = game.BurnPile.ToList();
+            var availableBurntCards = burnPile.TakeLast(Math.Min(3, burnPile.Count)).ToList();
+            
+            if (request.BurntCardIndex < 0 || request.BurntCardIndex >= availableBurntCards.Count)
+                return BadRequest($"BurntCardIndex must be between 0 and {availableBurntCards.Count - 1}");
+
+            if (request.HoleCardIndex < 0 || request.HoleCardIndex >= player.HoleCards.Count)
+                return BadRequest($"HoleCardIndex must be between 0 and {player.HoleCards.Count - 1}");
+
+            var chosenBurntCard = availableBurntCards[request.BurntCardIndex.Value];
+            var originalHoleCards = player.HoleCards.ToList();
+            var discardedHoleCard = originalHoleCards[request.HoleCardIndex.Value];
+            var keptHoleCard = originalHoleCards.Where((card, index) => index != request.HoleCardIndex.Value).First();
+
+            // Update player's hole cards
+            player.ClearHoleCards();
+            player.AddHoleCard(keptHoleCard);
+            player.AddHoleCard(chosenBurntCard);
+
+            // Add discarded hole card to burn pile (becomes most recent)
+            game.AddToBurnPile(discardedHoleCard);
+
+            // Consume the ability since it's complete
+            player.AbilitySlot.ConsumeAbility(trashmanAbility);
+
+            var result = new Poker.Power.TrashmanResult(chosenBurntCard, discardedHoleCard, new List<Card> { keptHoleCard, chosenBurntCard });
+
+            return Ok(new {
+                Success = true,
+                Message = $"Trashman completed - {result}",
+                AbilityUsed = request.AbilityType,
+                PlayerId = request.PlayerId,
+                PlayerName = player.Name,
+                Result = new {
+                    RetrievedCard = chosenBurntCard.ToString(),
+                    DiscardedCard = discardedHoleCard.ToString(),
+                    NewHoleCards = new List<string> { keptHoleCard.ToString(), chosenBurntCard.ToString() }
+                },
+                GameState = GetGameState(game),
+                Timestamp = DateTime.Now
+            });
+        }
+        private Microsoft.AspNetCore.Mvc.ActionResult CompleteManifest(string gameId, AbilityRequest request, GameManager game, Player player)
+        {
+            if (!request.DiscardIndex.HasValue)
+                return BadRequest("DiscardIndex is required to complete manifest");
+
+            if (!request.DrawnCard.HasValue || string.IsNullOrEmpty(request.DrawnCardSuit))
+                return BadRequest("DrawnCard rank and suit are required to complete manifest");
+
+            // Reconstruct the drawn card from the request
+            var drawnCard = new Card(request.DrawnCard.Value, request.DrawnCardSuit);
+            
+            // Get current hole cards and add drawn card
+            var allCards = new List<Card>(player.HoleCards) { drawnCard };
+            
+            if (request.DiscardIndex < 0 || request.DiscardIndex >= allCards.Count)
+                return BadRequest($"DiscardIndex must be between 0 and {allCards.Count - 1}");
+
+            var discardedCard = allCards[request.DiscardIndex.Value];
+            var keptCards = allCards.Where((card, index) => index != request.DiscardIndex.Value).ToList();
+
+            // Update player's hole cards
+            player.ClearHoleCards();
+            foreach (var card in keptCards)
+            {
+                player.AddHoleCard(card);
+            }
+
+            var result = new Poker.Power.ManifestResult(discardedCard, keptCards, drawnCard);
+
+            return Ok(new {
+                Success = true,
+                Message = $"Manifest completed - {result}",
+                AbilityUsed = request.AbilityType,
+                PlayerId = request.PlayerId,
+                PlayerName = player.Name,
+                Result = new {
+                    DrawnCard = drawnCard.ToString(),
+                    DiscardedCard = discardedCard.ToString(),
+                    NewHoleCards = keptCards.Select(c => c.ToString()).ToList()
+                },
+                GameState = GetGameState(game),
+                Timestamp = DateTime.Now
+            });
         }
 
         [HttpDelete("{gameId}")]
@@ -687,6 +912,18 @@ namespace Poker.Controllers
             public int? TargetPlayerId { get; set; }
             public int? CardIndex { get; set; }
             public bool? RevealSuit { get; set; }
+            
+            // Properties for manifest completion
+            public int? DiscardIndex { get; set; } // Which card to discard (0, 1, or 2)
+            public int? DrawnCard { get; set; } // Rank of the drawn card (for verification)
+            public string? DrawnCardSuit { get; set; } // Suit of the drawn card (for verification)
+            
+            // NEW: Properties for trashman completion
+            public int? BurntCardIndex { get; set; } // Which burnt card to retrieve (0, 1, or 2)
+            public int? HoleCardIndex { get; set; } // Which hole card to discard (0 or 1)
+            public int? RetrievedCardIndex { get; set; } // For verification in final step
+            
+            // Legacy properties (can be removed eventually)
             public int? Rank { get; set; }
             public string? Suit { get; set; }
         }

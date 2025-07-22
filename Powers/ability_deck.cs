@@ -30,13 +30,15 @@ namespace Poker.Power
         {
             int totalAbilities = playerCount * 2;
             
-            // Calculate distribution based on ratios
-            int peekCount = (int)Math.Round(totalAbilities * 0.40); // 40%
-            int burnCount = (int)Math.Round(totalAbilities * 0.35); // 35%
-            int manifestCount = (int)Math.Round(totalAbilities * 0.25); // 25%
+            // Calculate distribution based on ratios (now with 5 abilities)
+            int peekCount = (int)Math.Round(totalAbilities * 0.30);      // 30% (reduced)
+            int burnCount = (int)Math.Round(totalAbilities * 0.25);      // 25% (reduced)
+            int manifestCount = (int)Math.Round(totalAbilities * 0.20);  // 20% (reduced)
+            int trashmanCount = (int)Math.Round(totalAbilities * 0.15);  // 15% (same)
+            int deadmanCount = (int)Math.Round(totalAbilities * 0.10);   // 10% (new ability)
             
             // Adjust for rounding discrepancies to ensure exact count
-            int actualTotal = peekCount + burnCount + manifestCount;
+            int actualTotal = peekCount + burnCount + manifestCount + trashmanCount + deadmanCount;
             int difference = totalAbilities - actualTotal;
             
             // Add the difference to the largest category (Peek)
@@ -59,6 +61,17 @@ namespace Poker.Power
             for (int i = 0; i < manifestCount; i++)
             {
                 _abilities.Add(new ManifestAbility(_nextAbilityId++));
+            }
+            
+            for (int i = 0; i < trashmanCount; i++)
+            {
+                _abilities.Add(new TrashmanAbility(_nextAbilityId++));
+            }
+            
+            // NEW: Create Deadman abilities
+            for (int i = 0; i < deadmanCount; i++)
+            {
+                _abilities.Add(new DeadmanAbility(_nextAbilityId++));
             }
         }
         
@@ -154,6 +167,12 @@ namespace Poker.Power
                     case AbilityType.Manifest:
                         distribution.ManifestCount++;
                         break;
+                    case AbilityType.Trashman:
+                        distribution.TrashmanCount++;
+                        break;
+                    case AbilityType.Deadman:
+                        distribution.DeadmanCount++;
+                        break;
                 }
             }
             
@@ -174,7 +193,7 @@ namespace Poker.Power
                 return "Ability Deck: Empty";
                 
             var dist = GetDistribution();
-            return $"Ability Deck: {RemainingAbilities} abilities (Peek: {dist.PeekCount}, Burn: {dist.BurnCount}, Manifest: {dist.ManifestCount})";
+            return $"Ability Deck: {RemainingAbilities} abilities (Peek: {dist.PeekCount}, Burn: {dist.BurnCount}, Manifest: {dist.ManifestCount}, Trashman: {dist.TrashmanCount})";
         }
         
         // Debug method to see current deck state
@@ -189,12 +208,14 @@ namespace Poker.Power
         public int PeekCount { get; set; }
         public int BurnCount { get; set; }
         public int ManifestCount { get; set; }
+        public int TrashmanCount { get; set; }
+        public int DeadmanCount { get; set; }
         
-        public int TotalCount => PeekCount + BurnCount + ManifestCount;
+        public int TotalCount => PeekCount + BurnCount + ManifestCount + TrashmanCount + DeadmanCount;
         
         public override string ToString()
         {
-            return $"Peek: {PeekCount}, Burn: {BurnCount}, Manifest: {TotalCount} (Total: {TotalCount})";
+            return $"Peek: {PeekCount}, Burn: {BurnCount}, Manifest: {ManifestCount}, Trashman: {TrashmanCount}, Deadman: {DeadmanCount} (Total: {TotalCount})";
         }
     }
 }

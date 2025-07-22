@@ -309,53 +309,49 @@ namespace Poker.Play
         
         private static (ActionType actionType, decimal amount) ExecuteManifestAbility(Player currentPlayer, Poker.Power.Ability ability, GameManager gameManager)
         {
-            Console.WriteLine("Choose a card to manifest:");
-            
-            // Get rank choice
-            Console.Write("Enter rank (2-14, where 11=Jack, 12=Queen, 13=King, 14=Ace): ");
-            string? rankInput = Console.ReadLine()?.Trim();
-            
-            if (!int.TryParse(rankInput, out int rank) || rank < 2 || rank > 14)
+            Console.WriteLine($"\n🔮 {currentPlayer.Name} is using Manifest!");
+            Console.WriteLine("Current hole cards:");
+            for (int i = 0; i < currentPlayer.HoleCards.Count; i++)
             {
-                Console.WriteLine("❌ Invalid rank. Must be 2-14.");
-                return (ActionType.Cancel, 0);
+                Console.WriteLine($"  {i + 1}. {currentPlayer.HoleCards[i]}");
             }
             
-            // Get suit choice
-            Console.WriteLine("Choose suit:");
-            Console.WriteLine("  1. Hearts");
-            Console.WriteLine("  2. Clubs");
-            Console.WriteLine("  3. Spades");
-            Console.WriteLine("  4. Diamonds");
-            Console.WriteLine("  5. Cancel");
-            
-            Console.Write("Choose suit (1-5): ");
-            string? suitInput = Console.ReadLine()?.Trim();
-            
-            if (!int.TryParse(suitInput, out int suitChoice) || suitChoice < 1 || suitChoice > 5)
-            {
-                Console.WriteLine("❌ Invalid suit choice.");
-                return (ActionType.Cancel, 0);
-            }
-            
-            if (suitChoice == 5)
-            {
-                Console.WriteLine("↩️ Manifest cancelled.");
-                return (ActionType.Cancel, 0);
-            }
-            
-            string[] suits = { "Hearts", "Clubs", "Spades", "Diamonds" };
-            string chosenSuit = suits[suitChoice - 1];
-            
-            // Execute the manifest using the exposed deck
+            // Execute the manifest using the deck
             var manifestResult = currentPlayer.UseAbility(ability, new List<Player>(), gameManager.Deck);
             
             if (manifestResult.Success && manifestResult.Data is Poker.Power.ManifestPendingResult pendingResult)
             {
-                // Complete the manifest with player's choice
-                var finalResult = pendingResult.CompleteManifest(rank, chosenSuit);
-                Console.WriteLine($"✅ {currentPlayer.Name} manifested {finalResult.ChosenCard} as the next card to be dealt!");
-                return (ActionType.Cancel, 0); // Return Cancel to stay on same turn
+                Console.WriteLine($"\nDrew card: {pendingResult.DrawnCard}");
+                Console.WriteLine("\n⚠️  You must choose which card to DISCARD (the other 2 will become your new hole cards):");
+                
+                for (int i = 0; i < pendingResult.AllCards.Count; i++)
+                {
+                    var cardType = pendingResult.AllCards[i].Equals(pendingResult.DrawnCard) ? " (Drawn)" : " (Hole Card)";
+                    Console.WriteLine($"  {i + 1}. {pendingResult.AllCards[i]}{cardType}");
+                }
+                
+                while (true)
+                {
+                    Console.Write($"Choose card to discard (1-{pendingResult.AllCards.Count}): ");
+                    string? discardInput = Console.ReadLine()?.Trim();
+                    
+                    if (int.TryParse(discardInput, out int discardChoice) && discardChoice >= 1 && discardChoice <= pendingResult.AllCards.Count)
+                    {
+                        // Complete the manifest
+                        var finalResult = pendingResult.CompleteManifest(discardChoice - 1, currentPlayer);
+                        
+                        Console.WriteLine($"✅ Manifest completed!");
+                        Console.WriteLine($"   Drew: {finalResult.DrawnCard}");
+                        Console.WriteLine($"   Discarded: {finalResult.DiscardedCard}");
+                        Console.WriteLine($"   New hole cards: {string.Join(", ", finalResult.KeptCards)}");
+                        
+                        return (ActionType.Cancel, 0); // Return Cancel to stay on same turn
+                    }
+                    else
+                    {
+                        Console.WriteLine($"❌ Invalid choice. Please enter a number between 1 and {pendingResult.AllCards.Count}.");
+                    }
+                }
             }
             else
             {

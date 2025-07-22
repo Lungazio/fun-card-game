@@ -107,7 +107,7 @@ namespace Poker.Controllers
             }
         }
 
-        [HttpPost("{gameId}/action")]
+[HttpPost("{gameId}/action")]
         public Microsoft.AspNetCore.Mvc.ActionResult ProcessAction(string gameId, [FromBody] ActionRequest request)
         {
             if (!ValidateApiKey()) return Unauthorized();
@@ -158,120 +158,27 @@ namespace Poker.Controllers
             
             try
             {
-                Poker.Players.ActionResult actionResult;
+                // Process the action through GameManager (no duplicate calls)
+                var gameProcessed = game.ProcessPlayerAction(request.ActionType, request.Amount);
                 
-                // Validate and execute action
-                switch (request.ActionType)
-                {
-                    case Poker.Players.ActionType.Call:
-                        var callAmount = CalculateCallAmount(game, player);
-                        if (callAmount == 0)
-                        {
-                            return BadRequest(new { 
-                                error = "Cannot call when no bet to match - use Check instead",
-                                currentBet = game.TurnManager.CurrentBet,
-                                yourBet = player.CurrentBet
-                            });
-                        }
-                        actionResult = player.Call(callAmount);
-                        break;
-                        
-                    case Poker.Players.ActionType.Check:
-                        if (game.TurnManager.CurrentBet > player.CurrentBet)
-                        {
-                            return BadRequest(new { 
-                                error = "Cannot check when there's a bet to call",
-                                currentBet = game.TurnManager.CurrentBet,
-                                yourBet = player.CurrentBet,
-                                amountToCall = game.TurnManager.CurrentBet - player.CurrentBet
-                            });
-                        }
-                        actionResult = player.Check();
-                        break;
-                        
-                    case Poker.Players.ActionType.Fold:
-                        actionResult = player.Fold();
-                        break;
-                        
-                    case Poker.Players.ActionType.Raise:
-                        // Enhanced raise validation
-                        if (request.Amount <= 0)
-                        {
-                            return BadRequest(new { 
-                                error = "Raise amount must be positive",
-                                providedAmount = request.Amount
-                            });
-                        }
-                        
-                        var totalRaiseAmount = game.TurnManager.CurrentBet + request.Amount;
-                        var minimumRaiseTotal = game.TurnManager.CurrentBet + game.TurnManager.MinimumRaise;
-                        
-                        if (totalRaiseAmount < minimumRaiseTotal)
-                        {
-                            return BadRequest(new { 
-                                error = "Raise amount too small",
-                                minimumRaise = game.TurnManager.MinimumRaise,
-                                currentBet = game.TurnManager.CurrentBet,
-                                minimumTotalBet = minimumRaiseTotal,
-                                yourRaiseAmount = request.Amount,
-                                requiredRaiseAmount = minimumRaiseTotal - game.TurnManager.CurrentBet
-                            });
-                        }
-                        
-                        var raiseAmountNeeded = totalRaiseAmount - player.CurrentBet;
-                        if (player.CurrentBalance < raiseAmountNeeded)
-                        {
-                            return BadRequest(new { 
-                                error = "Insufficient funds for raise",
-                                requiredAmount = raiseAmountNeeded,
-                                availableBalance = player.CurrentBalance,
-                                suggestAllIn = true
-                            });
-                        }
-                        
-                        actionResult = player.Raise(raiseAmountNeeded);
-                        break;
-                        
-                    case Poker.Players.ActionType.AllIn:
-                        if (player.CurrentBalance <= 0)
-                        {
-                            return BadRequest(new { 
-                                error = "No funds available for all-in",
-                                currentBalance = player.CurrentBalance
-                            });
-                        }
-                        actionResult = player.AllIn();
-                        break;
-                        
-                    default:
-                        return BadRequest(new { 
-                            error = "Invalid action type",
-                            providedAction = request.ActionType.ToString(),
-                            validActions = player.GetValidActions(game.TurnManager.CurrentBet, game.TurnManager.MinimumRaise)
-                        });
-                }
-                
-                if (!actionResult.Success)
+                if (!gameProcessed)
                 {
                     return BadRequest(new { 
                         error = "Action failed",
-                        message = actionResult.Message,
+                        message = "Game manager rejected the action",
                         playerBalance = player.CurrentBalance,
-                        actionType = actionResult.Action.ToString()
+                        actionType = request.ActionType.ToString()
                     });
                 }
                 
-                // Process the action and get the result
-                var gameProcessed = game.ProcessPlayerAction(request.ActionType, request.Amount);
-                
                 return Ok(new { 
                     Success = true,
-                    ActionResult = actionResult.Message,
+                    ActionResult = "Action processed successfully",
                     PlayerAction = new {
                         PlayerId = player.ID,
                         PlayerName = player.Name,
                         Action = request.ActionType.ToString(),
-                        Amount = actionResult.Amount,
+                        Amount = request.Amount,
                         Timestamp = DateTime.Now
                     },
                     GameState = GetGameState(game),

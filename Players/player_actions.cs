@@ -65,13 +65,19 @@ namespace Poker.Players
         
         public ActionResult Fold()
         {
+            Console.WriteLine($"DEBUG: {_player.Name}.Fold() called - IsFolded: {IsFolded}, IsMyTurn: {_player.IsMyTurn}");
+            
             if (!_player.IsMyTurn)
                 return new ActionResult(ActionType.Fold, false, "Not your turn");
                 
             if (IsFolded)
+            {
+                Console.WriteLine($"DEBUG: {_player.Name} fold failed - already folded!");
                 return new ActionResult(ActionType.Fold, false, "Player already folded");
+            }
                 
             IsFolded = true;
+            Console.WriteLine($"DEBUG: {_player.Name} successfully folded");
             return new ActionResult(ActionType.Fold, true, "Folded");
         }
         

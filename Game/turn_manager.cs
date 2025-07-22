@@ -100,11 +100,19 @@ namespace Poker.Game
         
         public bool ProcessPlayerAction(Player player, ActionResult action)
         {
+            Console.WriteLine($"DEBUG: TurnManager.ProcessPlayerAction called for {player.Name} with action {action.Action}");
             if (!_bettingRoundActive || player != CurrentPlayer)
-                return false;
                 
-            if (!action.Success && !action.IsCancelled)
+            {
+                Console.WriteLine($"DEBUG: Early return - BettingActive: {_bettingRoundActive}, IsCurrentPlayer: {player == CurrentPlayer}");
                 return false;
+            }
+
+            if (!action.Success && !action.IsCancelled)
+
+            {
+                return false;
+            }
             
             // Handle cancelled actions - stay on same player's turn
             if (action.IsCancelled)
@@ -188,6 +196,7 @@ namespace Poker.Game
         
         private void MoveToNextPlayer()
         {
+            Console.WriteLine($"DEBUG: MoveToNextPlayer called, current player: {CurrentPlayer?.Name} (index {_currentPlayerIndex})");
             CurrentPlayer?.SetTurn(false);
             
             // Find next player who can act and hasn't acted this round (or needs to respond to raise)
@@ -199,9 +208,12 @@ namespace Poker.Game
                 _currentPlayerIndex = (_currentPlayerIndex + 1) % _players.Count;
                 attempts++;
                 
+                Console.WriteLine($"DEBUG: Attempt {attempts}, checking index {_currentPlayerIndex}");
+                
                 // Check if we've gone full circle
                 if (attempts > _players.Count)
                 {
+                    Console.WriteLine("DEBUG: Gone full circle, ending betting round");
                     // No more players need to act - end betting round
                     _bettingRoundActive = false;
                     _currentPlayerIndex = -1;
@@ -209,14 +221,15 @@ namespace Poker.Game
                 }
                 
                 var nextPlayer = _players[_currentPlayerIndex];
+                bool canAct = nextPlayer.CanAct();
+                bool hasActed = nextPlayer.HasActedThisRound;
+                bool needsToAct = !hasActed || nextPlayer.CurrentBet < _currentBet;
                 
-                // Player needs to act if:
-                // 1. They can act (not folded/all-in)
-                // 2. They haven't acted this round, OR
-                // 3. They need to respond to a raise (their bet < current bet)
-                if (nextPlayer.CanAct() && 
-                    (!nextPlayer.HasActedThisRound || nextPlayer.CurrentBet < _currentBet))
+                Console.WriteLine($"DEBUG: {nextPlayer.Name} - CanAct: {canAct}, HasActed: {hasActed}, CurrentBet: {nextPlayer.CurrentBet}, _currentBet: {_currentBet}, NeedsToAct: {needsToAct}");
+                
+                if (canAct && needsToAct)
                 {
+                    Console.WriteLine($"DEBUG: Setting {nextPlayer.Name} as current player");
                     SetCurrentPlayerTurn();
                     return;
                 }

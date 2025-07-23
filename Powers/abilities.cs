@@ -13,7 +13,9 @@ namespace Poker.Power
         Burn,
         Manifest,
         Trashman,
-        Deadman
+        Deadman,
+        Chaos,
+        Yoink // NEW: Added Yoink ability
     }
 
     // Abstract base class for all abilities
@@ -235,6 +237,117 @@ namespace Poker.Power
         }
     }
 
+    // NEW: Concrete implementation: Yoink Ability
+    public class YoinkAbility : Ability
+    {
+        public YoinkAbility(int id) : base(id, "Yoink", "Switch one of your hole cards with a community card on the board", AbilityType.Yoink)
+        {
+        }
+
+        public override AbilityResult Use(Player user, List<Player> availableTargets, object additionalData = null)
+        {
+            if (user == null)
+                return new AbilityResult(false, "Invalid user");
+
+            // additionalData should contain board information
+            if (!(additionalData is YoinkData yoinkData))
+                return new AbilityResult(false, "Invalid yoink data provided");
+
+            var board = yoinkData.Board;
+
+            if (board.Count == 0)
+                return new AbilityResult(false, "No community cards on the board to yoink");
+
+            if (!user.HasHoleCards() || user.HoleCards.Count < 2)
+                return new AbilityResult(false, "Player must have hole cards to use yoink");
+
+            // Return the pending result with board cards and hole cards for player to choose from
+            return new AbilityResult(true,
+                $"{user.Name} used Yoink ability - choose which cards to switch",
+                new YoinkPendingResult(user.HoleCards.ToList(), board.CommunityCards.ToList()));
+        }
+    }
+
+    // NEW: Concrete implementation: Chaos Ability
+    public class ChaosAbility : Ability
+    {
+        public ChaosAbility(int id) : base(id, "Chaos", "Shuffle all active players' hole cards and redistribute them randomly", AbilityType.Chaos)
+        {
+        }
+
+        public override AbilityResult Use(Player user, List<Player> availableTargets, object additionalData = null)
+        {
+            if (user == null)
+                return new AbilityResult(false, "Invalid user");
+
+            // additionalData should contain all players
+            if (!(additionalData is List<Player> allPlayers))
+                return new AbilityResult(false, "Invalid player list provided");
+
+            // Get all active players (not folded and have hole cards)
+            var activePlayers = allPlayers.Where(p => !p.IsFolded && p.HasHoleCards()).ToList();
+
+            if (activePlayers.Count < 2)
+                return new AbilityResult(false, "Need at least 2 active players to use Chaos");
+
+            // Collect all hole cards from active players
+            var allHoleCards = new List<Card>();
+            var playerCardCounts = new Dictionary<int, int>();
+
+            foreach (var player in activePlayers)
+            {
+                var playerCards = player.HoleCards.ToList();
+                allHoleCards.AddRange(playerCards);
+                playerCardCounts[player.ID] = playerCards.Count;
+                
+                // Clear the player's current hole cards
+                player.ClearHoleCards();
+            }
+
+            // Shuffle all the collected cards
+            var random = new Random();
+            for (int i = allHoleCards.Count - 1; i > 0; i--)
+            {
+                int j = random.Next(i + 1);
+                (allHoleCards[i], allHoleCards[j]) = (allHoleCards[j], allHoleCards[i]);
+            }
+
+            // Redistribute the shuffled cards back to players
+            int cardIndex = 0;
+            var redistributionInfo = new List<ChaosPlayerInfo>();
+
+            foreach (var player in activePlayers)
+            {
+                var cardCount = playerCardCounts[player.ID];
+                var newCards = new List<Card>();
+
+                for (int i = 0; i < cardCount; i++)
+                {
+                    if (cardIndex < allHoleCards.Count)
+                    {
+                        var card = allHoleCards[cardIndex];
+                        player.AddHoleCard(card);
+                        newCards.Add(card);
+                        cardIndex++;
+                    }
+                }
+
+                redistributionInfo.Add(new ChaosPlayerInfo
+                {
+                    PlayerId = player.ID,
+                    PlayerName = player.Name,
+                    NewHoleCards = newCards.Select(c => c.ToString()).ToList()
+                });
+            }
+
+            var chaosResult = new ChaosResult(redistributionInfo);
+
+            return new AbilityResult(true,
+                $"{user.Name} used Chaos ability - shuffled and redistributed all active players' hole cards",
+                chaosResult);
+        }
+    }
+
     // New class for when trashman is cast but card choices haven't been made yet
     public class TrashmanPendingResult
     {
@@ -421,6 +534,144 @@ namespace Poker.Power
         public int PlayerId { get; set; }
         public string PlayerName { get; set; } = "";
         public List<string> HoleCards { get; set; } = new();
+    }
+
+    // NEW: Supporting data classes for Chaos ability
+    public class ChaosData
+    {
+        public List<Player> AllPlayers { get; set; }
+
+        public ChaosData(List<Player> allPlayers)
+        {
+            AllPlayers = allPlayers;
+        }
+    }
+
+    public class ChaosResult
+    {
+        public List<ChaosPlayerInfo> PlayersAfterChaos { get; set; }
+
+        public ChaosResult(List<ChaosPlayerInfo> playersAfterChaos)
+        {
+            PlayersAfterChaos = playersAfterChaos;
+        }
+
+        public override string ToString()
+        {
+            if (!PlayersAfterChaos.Any())
+                return "No players affected by chaos";
+
+            var redistributions = PlayersAfterChaos.Select(pi => 
+                $"{pi.PlayerName}: [{string.Join(", ", pi.NewHoleCards)}]");
+            return $"Chaos redistributed cards: {string.Join("; ", redistributions)}";
+        }
+    }
+
+    public class ChaosPlayerInfo
+    {
+        public int PlayerId { get; set; }
+        public string PlayerName { get; set; } = "";
+        public List<string> NewHoleCards { get; set; } = new();
+    }
+
+    // NEW: Supporting data classes for Yoink ability
+    public class YoinkData
+    {
+        public Poker.Core.Board Board { get; set; }
+
+        public YoinkData(Poker.Core.Board board)
+        {
+            Board = board;
+        }
+    }
+
+    public class YoinkPendingResult
+    {
+        public List<Card> OriginalHoleCards { get; set; }
+        public List<Card> AvailableBoardCards { get; set; }
+
+        public YoinkPendingResult(List<Card> originalHoleCards, List<Card> availableBoardCards)
+        {
+            OriginalHoleCards = originalHoleCards;
+            AvailableBoardCards = availableBoardCards;
+        }
+
+        // Method to complete the yoink after player chooses which cards to switch
+        public YoinkResult CompleteYoink(int holeCardIndex, int boardCardIndex, Player player, Poker.Core.Board board)
+        {
+            if (holeCardIndex < 0 || holeCardIndex >= OriginalHoleCards.Count)
+                throw new ArgumentOutOfRangeException(nameof(holeCardIndex), "Invalid hole card choice");
+
+            if (boardCardIndex < 0 || boardCardIndex >= AvailableBoardCards.Count)
+                throw new ArgumentOutOfRangeException(nameof(boardCardIndex), "Invalid board card choice");
+
+            var holeCardToSwap = OriginalHoleCards[holeCardIndex];
+            var boardCardToSwap = AvailableBoardCards[boardCardIndex];
+
+            // Update player's hole cards
+            player.ClearHoleCards();
+            for (int i = 0; i < OriginalHoleCards.Count; i++)
+            {
+                if (i == holeCardIndex)
+                {
+                    player.AddHoleCard(boardCardToSwap); // Add the board card
+                }
+                else
+                {
+                    player.AddHoleCard(OriginalHoleCards[i]); // Keep original hole card
+                }
+            }
+
+            // Update the board - replace the board card with the hole card
+            // This is a bit tricky since Board doesn't have a direct replace method
+            // We'll need to clear and rebuild the board
+            var newBoardCards = new List<Card>();
+            for (int i = 0; i < AvailableBoardCards.Count; i++)
+            {
+                if (i == boardCardIndex)
+                {
+                    newBoardCards.Add(holeCardToSwap); // Add the hole card
+                }
+                else
+                {
+                    newBoardCards.Add(AvailableBoardCards[i]); // Keep original board card
+                }
+            }
+
+            // Clear and rebuild the board
+            board.Clear();
+            foreach (var card in newBoardCards)
+            {
+                board.AddCard(card);
+            }
+
+            var newHoleCards = player.HoleCards.ToList();
+
+            return new YoinkResult(holeCardToSwap, boardCardToSwap, newHoleCards, newBoardCards);
+        }
+    }
+
+    public class YoinkResult
+    {
+        public Card HoleCardSwapped { get; set; }
+        public Card BoardCardSwapped { get; set; }
+        public List<Card> NewHoleCards { get; set; }
+        public List<Card> NewBoardCards { get; set; }
+
+        public YoinkResult(Card holeCardSwapped, Card boardCardSwapped, List<Card> newHoleCards, List<Card> newBoardCards)
+        {
+            HoleCardSwapped = holeCardSwapped;
+            BoardCardSwapped = boardCardSwapped;
+            NewHoleCards = newHoleCards;
+            NewBoardCards = newBoardCards;
+        }
+
+        public override string ToString()
+        {
+            var newHoleCardsStr = string.Join(", ", NewHoleCards.Select(c => c.ToString()));
+            var newBoardCardsStr = string.Join(", ", NewBoardCards.Select(c => c.ToString()));
+            return $"Yoinked {BoardCardSwapped} from board for {HoleCardSwapped} from hand. New hole cards: [{newHoleCardsStr}]. New board: [{newBoardCardsStr}]";
+        }
     }
 
     // Supporting data classes for Trashman ability

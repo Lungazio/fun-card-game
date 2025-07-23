@@ -82,7 +82,8 @@ namespace Poker.Power
                 // Check if this is a pending result that requires a second action
                 bool isPendingResult = result.Data is ManifestPendingResult || 
                                      result.Data is BurnPendingResult ||
-                                     result.Data is TrashmanPendingResult;  // Added TrashmanPendingResult!
+                                     result.Data is TrashmanPendingResult ||
+                                     result.Data is YoinkPendingResult;  // Added YoinkPendingResult!
                 
                 // Only remove the ability if it's not a pending result
                 if (!isPendingResult)

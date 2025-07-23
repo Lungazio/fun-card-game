@@ -108,7 +108,7 @@ namespace Poker.Controllers
             }
         }
 
-[HttpPost("{gameId}/action")]
+        [HttpPost("{gameId}/action")]
         public Microsoft.AspNetCore.Mvc.ActionResult ProcessAction(string gameId, [FromBody] ActionRequest request)
         {
             if (!ValidateApiKey()) return Unauthorized();
@@ -362,6 +362,26 @@ namespace Poker.Controllers
                         additionalData = game.Players.ToList();
                         break;
                         
+                    case "yoink":
+                        // Check if this is the initial yoink or completion
+                        if (request.CardIndex.HasValue && request.TargetPlayerId.HasValue)
+                        {
+                            // This is completing a pending yoink
+                            // request.CardIndex = hole card index, request.TargetPlayerId = board card index (reusing field)
+                            return CompleteYoink(gameId, request, game, player);
+                        }
+                        else
+                        {
+                            // This is starting a new yoink
+                            additionalData = new Poker.Power.YoinkData(game.Board);
+                        }
+                        break;
+                        
+                    case "chaos":
+                        // Chaos is a simple one-step ability - just needs all players
+                        additionalData = game.Players.ToList();
+                        break;
+                        
                     default:
                         return BadRequest($"Unknown ability type: {request.AbilityType}");
                 }
@@ -450,6 +470,51 @@ namespace Poker.Controllers
                                 HoleCards = fp.HoleCards
                             }),
                             Summary = deadmanResult.ToString(),
+                            GameState = GetGameState(game),
+                            Timestamp = DateTime.Now
+                        });
+                    }
+                    else if (result.Data is Poker.Power.YoinkPendingResult yoinkPending)
+                    {
+                        // Return the choice for the player (which cards to switch)
+                        return Ok(new {
+                            Success = true,
+                            Message = "Choose which cards to switch",
+                            AbilityUsed = request.AbilityType,
+                            PlayerId = request.PlayerId,
+                            PlayerName = player.Name,
+                            ChoiceRequired = true,
+                            AvailableHoleCards = yoinkPending.OriginalHoleCards.Select((card, index) => new {
+                                Index = index,
+                                Card = card.ToString(),
+                                Rank = card.GetRankName(),
+                                Suit = card.Suit
+                            }),
+                            AvailableBoardCards = yoinkPending.AvailableBoardCards.Select((card, index) => new {
+                                Index = index,
+                                Card = card.ToString(),
+                                Rank = card.GetRankName(),
+                                Suit = card.Suit
+                            }),
+                            Instructions = "Select one hole card and one board card to switch. You can cancel this ability.",
+                            Timestamp = DateTime.Now
+                        });
+                    }
+                    else if (result.Data is Poker.Power.ChaosResult chaosResult)
+                    {
+                        // Return the chaos redistribution results
+                        return Ok(new {
+                            Success = true,
+                            Message = $"Chaos ability used - shuffled and redistributed all active players' hole cards",
+                            AbilityUsed = request.AbilityType,
+                            PlayerId = request.PlayerId,
+                            PlayerName = player.Name,
+                            PlayersAfterChaos = chaosResult.PlayersAfterChaos.Select(p => new {
+                                PlayerId = p.PlayerId,
+                                PlayerName = p.PlayerName,
+                                NewHoleCards = p.NewHoleCards
+                            }),
+                            Summary = chaosResult.ToString(),
                             GameState = GetGameState(game),
                             Timestamp = DateTime.Now
                         });
@@ -580,6 +645,7 @@ namespace Poker.Controllers
                 Timestamp = DateTime.Now
             });
         }
+        
         private Microsoft.AspNetCore.Mvc.ActionResult CompleteManifest(string gameId, AbilityRequest request, GameManager game, Player player)
         {
             if (!request.DiscardIndex.HasValue)
@@ -619,6 +685,53 @@ namespace Poker.Controllers
                     DrawnCard = drawnCard.ToString(),
                     DiscardedCard = discardedCard.ToString(),
                     NewHoleCards = keptCards.Select(c => c.ToString()).ToList()
+                },
+                GameState = GetGameState(game),
+                Timestamp = DateTime.Now
+            });
+        }
+        
+        private Microsoft.AspNetCore.Mvc.ActionResult CompleteYoink(string gameId, AbilityRequest request, GameManager game, Player player)
+        {
+            if (!request.CardIndex.HasValue || !request.TargetPlayerId.HasValue)
+                return BadRequest("CardIndex (hole card) and TargetPlayerId (board card index) are required to complete yoink");
+
+            // Find the yoink ability
+            var yoinkAbility = player.AbilitySlot.FindAbilityByType(Poker.Power.AbilityType.Yoink);
+            if (yoinkAbility == null)
+                return BadRequest("Player no longer has yoink ability");
+
+            var holeCardIndex = request.CardIndex.Value;
+            var boardCardIndex = request.TargetPlayerId.Value; // Reusing this field for board card index
+
+            // Validate indices
+            if (holeCardIndex < 0 || holeCardIndex >= player.HoleCards.Count)
+                return BadRequest($"HoleCardIndex must be between 0 and {player.HoleCards.Count - 1}");
+
+            if (boardCardIndex < 0 || boardCardIndex >= game.Board.Count)
+                return BadRequest($"BoardCardIndex must be between 0 and {game.Board.Count - 1}");
+
+            var originalHoleCards = player.HoleCards.ToList();
+            var originalBoardCards = game.Board.CommunityCards.ToList();
+
+            // Execute the yoink using the pending result pattern
+            var yoinkPending = new Poker.Power.YoinkPendingResult(originalHoleCards, originalBoardCards);
+            var result = yoinkPending.CompleteYoink(holeCardIndex, boardCardIndex, player, game.Board);
+
+            // Consume the ability since it's complete
+            player.AbilitySlot.ConsumeAbility(yoinkAbility);
+
+            return Ok(new {
+                Success = true,
+                Message = $"Yoink completed - {result}",
+                AbilityUsed = request.AbilityType,
+                PlayerId = request.PlayerId,
+                PlayerName = player.Name,
+                Result = new {
+                    HoleCardSwapped = result.HoleCardSwapped.ToString(),
+                    BoardCardSwapped = result.BoardCardSwapped.ToString(),
+                    NewHoleCards = result.NewHoleCards.Select(c => c.ToString()).ToList(),
+                    NewBoardCards = result.NewBoardCards.Select(c => c.ToString()).ToList()
                 },
                 GameState = GetGameState(game),
                 Timestamp = DateTime.Now

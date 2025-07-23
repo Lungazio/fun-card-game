@@ -30,21 +30,37 @@ namespace Poker.Power
         {
             int totalAbilities = playerCount * 2;
             
-            // Calculate distribution based on ratios (now with 5 abilities)
-            int peekCount = (int)Math.Round(totalAbilities * 0.30);      // 30% (reduced)
-            int burnCount = (int)Math.Round(totalAbilities * 0.25);      // 25% (reduced)
-            int manifestCount = (int)Math.Round(totalAbilities * 0.20);  // 20% (reduced)
-            int trashmanCount = (int)Math.Round(totalAbilities * 0.15);  // 15% (same)
-            int deadmanCount = (int)Math.Round(totalAbilities * 0.10);   // 10% (new ability)
+            // Calculate distribution based on ratios (now with 7 abilities, Chaos being rarest)
+            int peekCount = (int)Math.Round(totalAbilities * 0.26);      // 26% (slightly reduced)
+            int burnCount = (int)Math.Round(totalAbilities * 0.21);      // 21% (slightly reduced)
+            int manifestCount = (int)Math.Round(totalAbilities * 0.17);  // 17% (slightly reduced)
+            int trashmanCount = (int)Math.Round(totalAbilities * 0.14);  // 14% (slightly reduced)
+            int deadmanCount = (int)Math.Round(totalAbilities * 0.10);   // 10% (slightly reduced)
+            int yoinkCount = (int)Math.Round(totalAbilities * 0.07);     // 7% (NEW - uncommon ability)
+            int chaosCount = (int)Math.Round(totalAbilities * 0.05);     // 5% (rarest ability)
             
             // Adjust for rounding discrepancies to ensure exact count
-            int actualTotal = peekCount + burnCount + manifestCount + trashmanCount + deadmanCount;
+            int actualTotal = peekCount + burnCount + manifestCount + trashmanCount + deadmanCount + yoinkCount + chaosCount;
             int difference = totalAbilities - actualTotal;
             
             // Add the difference to the largest category (Peek)
             if (difference != 0)
             {
                 peekCount += difference;
+            }
+            
+            // Ensure at least 1 chaos ability if we have enough total abilities
+            if (chaosCount == 0 && totalAbilities >= 7)
+            {
+                chaosCount = 1;
+                peekCount -= 1; // Take one from peek to maintain total
+            }
+            
+            // Ensure at least 1 yoink ability if we have enough total abilities
+            if (yoinkCount == 0 && totalAbilities >= 6)
+            {
+                yoinkCount = 1;
+                peekCount -= 1; // Take one from peek to maintain total
             }
             
             // Create abilities
@@ -68,10 +84,21 @@ namespace Poker.Power
                 _abilities.Add(new TrashmanAbility(_nextAbilityId++));
             }
             
-            // NEW: Create Deadman abilities
             for (int i = 0; i < deadmanCount; i++)
             {
                 _abilities.Add(new DeadmanAbility(_nextAbilityId++));
+            }
+            
+            // NEW: Create Yoink abilities (uncommon)
+            for (int i = 0; i < yoinkCount; i++)
+            {
+                _abilities.Add(new YoinkAbility(_nextAbilityId++));
+            }
+            
+            // NEW: Create Chaos abilities (rarest)
+            for (int i = 0; i < chaosCount; i++)
+            {
+                _abilities.Add(new ChaosAbility(_nextAbilityId++));
             }
         }
         
@@ -173,6 +200,12 @@ namespace Poker.Power
                     case AbilityType.Deadman:
                         distribution.DeadmanCount++;
                         break;
+                    case AbilityType.Yoink:
+                        distribution.YoinkCount++;
+                        break;
+                    case AbilityType.Chaos:
+                        distribution.ChaosCount++;
+                        break;
                 }
             }
             
@@ -193,7 +226,7 @@ namespace Poker.Power
                 return "Ability Deck: Empty";
                 
             var dist = GetDistribution();
-            return $"Ability Deck: {RemainingAbilities} abilities (Peek: {dist.PeekCount}, Burn: {dist.BurnCount}, Manifest: {dist.ManifestCount}, Trashman: {dist.TrashmanCount})";
+            return $"Ability Deck: {RemainingAbilities} abilities (Peek: {dist.PeekCount}, Burn: {dist.BurnCount}, Manifest: {dist.ManifestCount}, Trashman: {dist.TrashmanCount}, Deadman: {dist.DeadmanCount}, Yoink: {dist.YoinkCount}, Chaos: {dist.ChaosCount})";
         }
         
         // Debug method to see current deck state
@@ -210,12 +243,14 @@ namespace Poker.Power
         public int ManifestCount { get; set; }
         public int TrashmanCount { get; set; }
         public int DeadmanCount { get; set; }
+        public int YoinkCount { get; set; } // NEW: Added Yoink count
+        public int ChaosCount { get; set; } // NEW: Added Chaos count
         
-        public int TotalCount => PeekCount + BurnCount + ManifestCount + TrashmanCount + DeadmanCount;
+        public int TotalCount => PeekCount + BurnCount + ManifestCount + TrashmanCount + DeadmanCount + YoinkCount + ChaosCount;
         
         public override string ToString()
         {
-            return $"Peek: {PeekCount}, Burn: {BurnCount}, Manifest: {ManifestCount}, Trashman: {TrashmanCount}, Deadman: {DeadmanCount} (Total: {TotalCount})";
+            return $"Peek: {PeekCount}, Burn: {BurnCount}, Manifest: {ManifestCount}, Trashman: {TrashmanCount}, Deadman: {DeadmanCount}, Yoink: {YoinkCount}, Chaos: {ChaosCount} (Total: {TotalCount})";
         }
     }
 }
